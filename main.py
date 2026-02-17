@@ -37,6 +37,402 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=";", intents=intents)
 
 LOG_CHANNEL_ID = 1473167409505374220  # Logging channel
+BLUE = 0x4bbfff
+
+# =========================================================
+# =================== PROMOTION SYSTEM ====================
+# =========================================================
+
+# Role ID mappings
+ROLE_IDS = {
+    # Owner/Co-Owner
+    "owner": 1471642523821674618,
+    "co_owner": 1471642550271082690,
+    
+    # Category roles
+    "holding": 1471642360503992411,
+    "executive": 1471642126663024640,
+    "management": 1471641915215843559,
+    "supervision": 1471641790112333867,
+    "evaluation": 1472072792081170682,
+    "administration": 1471640542231396373,
+    "moderation": 1471640225015922982,
+    
+    # Name Executive
+    "name_executive_rank": 1471642668630020268,
+    "partner_executive": 1471642626863141059,
+    "associate_executive": 1471642323657031754,
+    "executive_rank": 1471642126663024640,
+    
+    # Management sub-ranks
+    "top_manager": 1471687503135248625,
+    "senior_manager": 1471646332799418601,
+    "junior_manager": 1471640133462659236,
+    "intern_manager": 1471646520909758666,
+    
+    # Supervision sub-ranks
+    "top_supervisor": 1471646257679171687,
+    "senior_supervisor": 1471646221604098233,
+    "junior_supervisor": 1471646134098460743,
+    "intern_supervisor": 1471640008011026666,
+    
+    # Evaluation sub-ranks
+    "top_evaluator": 1472073458321063987,
+    "senior_evaluator": 1472073396451020953,
+    "junior_evaluator": 1472073148949336215,
+    "intern_evaluator": 1472073043554734100,
+    
+    # Administration sub-ranks
+    "lead_administrator": 1471645738734714982,
+    "senior_administrator": 1471645702357520468,
+    "junior_administrator": 1471646093287755796,
+    "trial_administrator": 1471647027896254557,
+    
+    # Moderation sub-ranks
+    "lead_moderator": 1471642772359479420,
+    "senior_moderator": 1471642726796628048,
+    "junior_moderator": 1471646011741966517,
+    "trial_moderator": 1471646061369098375,
+}
+
+# Sub-rank role IDs (promotable positions)
+SUB_RANK_ROLES = {
+    # Executive
+    "Name Executive": 1471642668630020268,
+    "Partner Executive": 1471642626863141059,
+    "Associate Executive": 1471642323657031754,
+    "Executive": 1471642126663024640,
+    
+    # Management
+    "Top Manager": 1471687503135248625,
+    "Senior Manager": 1471646332799418601,
+    "Junior Manager": 1471640133462659236,
+    "Intern Manager": 1471646520909758666,
+    
+    # Supervision
+    "Top Supervisor": 1471646257679171687,
+    "Senior Supervisor": 1471646221604098233,
+    "Junior Supervisor": 1471646134098460743,
+    "Intern Supervisor": 1471640008011026666,
+    
+    # Evaluation
+    "Top Evaluator": 1472073458321063987,
+    "Senior Evaluator": 1472073396451020953,
+    "Junior Evaluator": 1472073148949336215,
+    "Intern Evaluator": 1472073043554734100,
+    
+    # Administration
+    "Lead Administrator": 1471645738734714982,
+    "Senior Administrator": 1471645702357520468,
+    "Junior Administrator": 1471646093287755796,
+    "Trial Administrator": 1471647027896254557,
+    
+    # Moderation
+    "Lead Moderator": 1471642772359479420,
+    "Senior Moderator": 1471642726796628048,
+    "Junior Moderator": 1471646011741966517,
+    "Trial Moderator": 1471646061369098375,
+}
+
+# Map sub-rank to category
+SUB_RANK_TO_CATEGORY = {
+    "Name Executive": "executive",
+    "Partner Executive": "executive",
+    "Associate Executive": "executive",
+    "Executive": "executive",
+    "Top Manager": "management",
+    "Senior Manager": "management",
+    "Junior Manager": "management",
+    "Intern Manager": "management",
+    "Top Supervisor": "supervision",
+    "Senior Supervisor": "supervision",
+    "Junior Supervisor": "supervision",
+    "Intern Supervisor": "supervision",
+    "Top Evaluator": "evaluation",
+    "Senior Evaluator": "evaluation",
+    "Junior Evaluator": "evaluation",
+    "Intern Evaluator": "evaluation",
+    "Lead Administrator": "administration",
+    "Senior Administrator": "administration",
+    "Junior Administrator": "administration",
+    "Trial Administrator": "administration",
+    "Lead Moderator": "moderation",
+    "Senior Moderator": "moderation",
+    "Junior Moderator": "moderation",
+    "Trial Moderator": "moderation",
+}
+
+# Category role IDs
+CATEGORY_ROLES = {
+    "executive": 1471642126663024640,
+    "management": 1471641915215843559,
+    "supervision": 1471641790112333867,
+    "evaluation": 1472072792081170682,
+    "administration": 1471640542231396373,
+    "moderation": 1471640225015922982,
+    "holding": 1471642360503992411,
+}
+
+def get_member_category(member):
+    for category, role_id in CATEGORY_ROLES.items():
+        if role_id in [role.id for role in member.roles]:
+            return category
+    return None
+
+def get_member_sub_rank(member):
+    for rank_name, role_id in SUB_RANK_ROLES.items():
+        if role_id in [role.id for role in member.roles]:
+            return rank_name
+    return None
+
+def can_promote(promoter, target_category, new_rank_category):
+    promoter_role_ids = [role.id for role in promoter.roles]
+    
+    # Owner/Co-Owner can promote anyone
+    if ROLE_IDS["owner"] in promoter_role_ids or ROLE_IDS["co_owner"] in promoter_role_ids:
+        return True
+    
+    # Holding can promote anyone
+    if ROLE_IDS["holding"] in promoter_role_ids:
+        return True
+    
+    # Intern Supervisor+ (Supervision team) can promote Moderation and Administration
+    if ROLE_IDS["intern_supervisor"] in promoter_role_ids:
+        if target_category in ["moderation", "administration"]:
+            return True
+        return False
+    
+    # Top Supervisor+ can promote anyone
+    if ROLE_IDS["top_supervisor"] in promoter_role_ids:
+        return True
+    
+    # Intern Manager+ (Management team) can promote Moderation, Administration, Evaluation
+    if ROLE_IDS["intern_manager"] in promoter_role_ids:
+        if target_category in ["moderation", "administration", "evaluation"]:
+            return True
+        return False
+    
+    # Top Manager+ can promote anyone
+    if ROLE_IDS["top_manager"] in promoter_role_ids:
+        return True
+    
+    # Executive (not Name Executive) can promote Moderation, Administration, Evaluation, Supervision
+    if ROLE_IDS["executive_rank"] in promoter_role_ids and ROLE_IDS["name_executive_rank"] not in promoter_role_ids:
+        if target_category in ["moderation", "administration", "evaluation", "supervision"]:
+            return True
+        return False
+    
+    # Name Executive can promote anyone
+    if ROLE_IDS["name_executive_rank"] in promoter_role_ids:
+        return True
+    
+    return False
+
+def get_roles_to_remove(member, new_rank_name):
+    roles_to_remove = []
+    member_role_ids = [role.id for role in member.roles]
+    
+    current_category = get_member_category(member)
+    current_sub_rank = get_member_sub_rank(member)
+    
+    if current_sub_rank:
+        sub_rank_id = SUB_RANK_ROLES.get(current_sub_rank)
+        if sub_rank_id and sub_rank_id in member_role_ids:
+            roles_to_remove.append(sub_rank_id)
+    
+    if current_category:
+        category_id = CATEGORY_ROLES.get(current_category)
+        if category_id and category_id in member_role_ids:
+            roles_to_remove.append(category_id)
+    
+    return roles_to_remove
+
+def get_roles_to_add(new_rank_name):
+    roles_to_add = []
+    
+    new_rank_id = SUB_RANK_ROLES.get(new_rank_name)
+    if new_rank_id:
+        roles_to_add.append(new_rank_id)
+    
+    new_category = SUB_RANK_TO_CATEGORY.get(new_rank_name)
+    if new_category:
+        category_id = CATEGORY_ROLES.get(new_category)
+        if category_id:
+            roles_to_add.append(category_id)
+    
+    return roles_to_add
+
+class PromoteModal(nextcord.ui.Modal):
+    def __init__(self, target_member, new_rank):
+        super().__init__("Promotion Details")
+        self.target_member = target_member
+        self.new_rank = new_rank
+        
+        self.initiated_by = nextcord.ui.TextInput(
+            label="Initiated By (names)",
+            style=nextcord.TextInputStyle.short,
+            required=True,
+            placeholder="Enter names of who initiated"
+        )
+        self.add_item(self.initiated_by)
+        
+        self.approved_by = nextcord.ui.TextInput(
+            label="Approved By (names)",
+            style=nextcord.TextInputStyle.short,
+            required=True,
+            placeholder="Enter names of who approved"
+        )
+        self.add_item(self.approved_by)
+        
+        self.reason = nextcord.ui.TextInput(
+            label="Reason",
+            style=nextcord.TextInputStyle.paragraph,
+            required=True,
+            placeholder="Explain why this promotion is being given"
+        )
+        self.add_item(self.reason)
+
+    async def callback(self, interaction: nextcord.Interaction):
+        await interaction.response.defer()
+        
+        former_position = get_member_sub_rank(self.target_member) or "No Position"
+        new_position = self.new_rank
+        
+        roles_to_remove = get_roles_to_remove(self.target_member, self.new_rank)
+        roles_to_add = get_roles_to_add(self.new_rank)
+        
+        remove_roles = [interaction.guild.get_role(rid) for rid in roles_to_remove if interaction.guild.get_role(rid)]
+        add_roles = [interaction.guild.get_role(rid) for rid in roles_to_add if interaction.guild.get_role(rid)]
+        
+        if remove_roles:
+            await self.target_member.remove_roles(*remove_roles)
+        if add_roles:
+            await self.target_member.add_roles(*add_roles)
+        
+        copy_text = f"""`Staff Member:` {self.target_member.mention}
+`Initiated By:` {self.initiated_by.value}
+`Approved By:` {self.approved_by.value}
+`Former Position:` {former_position}
+`Updated Position:` {new_position}
+`Reason:` {self.reason.value}"""
+        
+        await interaction.followup.send(
+            f"✅ **{self.target_member}** has been promoted to **{new_position}**!\n\n"
+            f"**COPY TEXT:**\n```\n{copy_text}\n```",
+            ephemeral=False
+        )
+        
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = nextcord.Embed(
+                title="Promotion Executed",
+                color=BLUE,
+                timestamp=utcnow()
+            )
+            embed.set_author(name=f"{interaction.user}", icon_url=interaction.user.display_avatar.url)
+            embed.add_field(name="Staff Member", value=f"{self.target_member.mention}", inline=True)
+            embed.add_field(name="Former Position", value=former_position, inline=True)
+            embed.add_field(name="New Position", value=new_position, inline=True)
+            embed.add_field(name="Initiated By", value=self.initiated_by.value, inline=False)
+            embed.add_field(name="Approved By", value=self.approved_by.value, inline=False)
+            embed.add_field(name="Reason", value=self.reason.value, inline=False)
+            await log_channel.send(embed=embed)
+
+class PromoteSelect(nextcord.ui.Select):
+    def __init__(self, target_member):
+        options = []
+        target_category = get_member_category(target_member)
+        
+        for rank_name, role_id in SUB_RANK_ROLES.items():
+            rank_category = SUB_RANK_TO_CATEGORY[rank_name]
+            if rank_category == target_category:
+                options.append(nextcord.SelectOption(
+                    label=rank_name,
+                    value=rank_name
+                ))
+        
+        super().__init__(
+            placeholder="Select new rank",
+            options=options,
+            custom_id="promote_rank_select"
+        )
+        self.target_member = target_member
+
+    async def callback(self, interaction: nextcord.Interaction):
+        new_rank = self.values[0]
+        
+        target_category = get_member_category(self.target_member)
+        new_rank_category = SUB_RANK_TO_CATEGORY.get(new_rank)
+        
+        if not can_promote(interaction.user, target_category, new_rank_category):
+            await interaction.response.send_message(
+                "❌ You don't have permission to promote this person to this rank.",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.send_modal(
+            PromoteModal(self.target_member, new_rank)
+        )
+
+class PromoteView(nextcord.ui.View):
+    def __init__(self, target_member):
+        super().__init__(timeout=300)
+        self.add_item(PromoteSelect(target_member))
+
+@bot.slash_command(name="promote", description="Promote a staff member")
+async def promote(interaction: nextcord.Interaction, member: nextcord.Member):
+    required_role_ids = [
+        1471642360503992411,  # Holding
+        1471642126663024640,  # Executive
+        1471641915215843559,  # Management
+        1471641790112333867,  # Supervision
+        1472072792081170682,  # Evaluation
+        1471640542231396373,  # Administration
+        1471640225015922982,  # Moderation
+    ]
+    
+    member_role_ids = [role.id for role in member.roles]
+    has_staff_role = any(rid in member_role_ids for rid in required_role_ids)
+    
+    if not has_staff_role:
+        await interaction.response.send_message(
+            "❌ This member doesn't have any staff roles to be promoted.",
+            ephemeral=True
+        )
+        return
+    
+    target_category = get_member_category(member)
+    
+    if not target_category:
+        await interaction.response.send_message(
+            "❌ Could not determine the member's current category.",
+            ephemeral=True
+        )
+        return
+    
+    options = []
+    for rank_name, role_id in SUB_RANK_ROLES.items():
+        rank_category = SUB_RANK_TO_CATEGORY[rank_name]
+        if rank_category == target_category:
+            options.append(nextcord.SelectOption(
+                label=rank_name,
+                value=rank_name
+            ))
+    
+    if not options:
+        await interaction.response.send_message(
+            "❌ No valid ranks available for promotion.",
+            ephemeral=True
+        )
+        return
+    
+    view = PromoteView(member)
+    await interaction.response.send_message(
+        f"Select the new rank for **{member}**:",
+        view=view,
+        ephemeral=True
+    )
 
 # =========================================================
 # =================== YOUR ORIGINAL CODE ==================
@@ -94,7 +490,7 @@ async def on_member_join(member):
             )
         )
 
-        await channel.send(embeds=[image_embed, welcome_embed])
+        await channel.send(content=member.mention, embeds=[image_embed, welcome_embed])
 
 # ------------------------------
 # Command Logging Helper
@@ -213,7 +609,6 @@ async def requesttraining_slash(interaction: nextcord.Interaction):
 # =========================================================
 
 MAX_TICKETS_PER_USER = 3
-BLUE = 0x4bbfff
 
 CATEGORIES = {
     "general": 1471689868022120468,
@@ -409,7 +804,7 @@ async def sendpanel(interaction: nextcord.Interaction):
 
     await interaction.channel.send(
         embed=embed,
-        view=TicketDropdownView()
+        view=TicketPanel()
     )
 
     await interaction.response.send_message(
@@ -456,3 +851,4 @@ async def on_ready():
 # Run bot
 # ------------------------------
 bot.run(os.getenv("TOKEN"))
+
