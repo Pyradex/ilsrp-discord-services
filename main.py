@@ -7,7 +7,7 @@ from nextcord.ext import commands
 # ------------------------------
 intents = nextcord.Intents.default()
 intents.members = True  # Required to detect member joins
-intents.message_content = True
+intents.message_content = True  # Required for prefix commands
 
 # ------------------------------
 # Bot setup
@@ -48,6 +48,25 @@ async def on_member_join(member):
             content=f"Greetings {member.mention} 🎉",
             embeds=[banner_embed, welcome_embed]
         )
+
+# ------------------------------
+# ;say command for two roles
+# ------------------------------
+ALLOWED_ROLE_IDS = [1471642126663024640, 1471642360503992411]  # executive & holding
+
+@bot.command()
+async def say(ctx, *, message: str):
+    """Repeats message and deletes original; only for specific roles."""
+    
+    # Check if user has at least one allowed role by ID
+    if any(role.id in ALLOWED_ROLE_IDS for role in ctx.author.roles):
+        try:
+            await ctx.message.delete()  # delete the original message
+        except nextcord.Forbidden:
+            pass  # bot lacks permission to delete
+        await ctx.send(message)        # send what they typed
+    else:
+        await ctx.send(f"❌ {ctx.author.mention}, you don't have permission to use this command.")
 
 # ------------------------------
 # Run bot using Render environment variable
