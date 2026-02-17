@@ -7,6 +7,7 @@ from nextcord.ext import commands
 # ------------------------------
 intents = nextcord.Intents.default()
 intents.members = True  # Required to detect member joins
+intents.message_content = True
 
 # ------------------------------
 # Bot setup
