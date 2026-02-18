@@ -1506,7 +1506,7 @@ class SessionVoteModal(nextcord.ui.Modal):
         # Embed 2 - Text content with vote info
         text_embed = nextcord.Embed(
             title="__ILSRP・Session Voting__",
-            description=f"> A Session Vote has been conducted by the Management Team+. React with {CHECKMARK_EMOJI} in order to vote. Once **{required_votes}** votes have been reacted, a session will begin! Thanks for voting and remain patient.\n\nSee you soon! <a:ILSRP:1471990869166002291>",
+            description=f"> A Session Vote has been conducted by the Management Team+. React with {CHECKMARK_EMOJI} in order to vote. Once **{required_votes}** votes have been reacted, a session will begin! Thanks for voting and remain patient.\n\nSee you soon! <:ILSRP:1471990869166002291>",
             color=SKY_BLUE,
             timestamp=utcnow()
         )
