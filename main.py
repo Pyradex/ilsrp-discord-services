@@ -920,10 +920,13 @@ class SessionManagementView(nextcord.ui.View):
             )
             return
         
-        await interaction.response.send_message(
-            "Please specify the number of votes required to start a session:",
-            ephemeral=True
-        )
+        # Check if session is already active
+        if SESSION_MESSAGE_ID is not None:
+            await interaction.response.send_message(
+                "Unable to use this session option. Please select a different one.",
+                ephemeral=True
+            )
+            return
         
         # Send a modal to get vote count
         modal = SessionVoteModal()
@@ -934,6 +937,14 @@ class SessionManagementView(nextcord.ui.View):
         if not has_management_role(interaction.user):
             await interaction.response.send_message(
                 "❌ You are not permitted to use this feature. It is restricted to Management+ members of Illinois State Roleplay's Staff Team.",
+                ephemeral=True
+            )
+            return
+        
+        # Check if session is already active
+        if SESSION_MESSAGE_ID is not None:
+            await interaction.response.send_message(
+                "Unable to use this session option. Please select a different one.",
                 ephemeral=True
             )
             return
@@ -1011,6 +1022,14 @@ class SessionManagementView(nextcord.ui.View):
             )
             return
         
+        # Check if session is NOT active (can't shutdown if no session)
+        if SESSION_MESSAGE_ID is None:
+            await interaction.response.send_message(
+                "Unable to use this session option. Please select a different one.",
+                ephemeral=True
+            )
+            return
+        
         await interaction.response.defer()
         
         session_channel = interaction.guild.get_channel(SESSION_CHANNEL_ID)
@@ -1022,6 +1041,17 @@ class SessionManagementView(nextcord.ui.View):
         global SESSION_MESSAGE_ID, SESSION_MESSAGE_CHANNEL_ID
         SESSION_MESSAGE_ID = None
         SESSION_MESSAGE_CHANNEL_ID = None
+        
+        # Delete all messages in the session channel except the pinned message
+        try:
+            async for message in session_channel.history(limit=100):
+                if message.id != SESSION_PINNED_MESSAGE_ID:
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+        except:
+            pass
         
         embed = nextcord.Embed(
             title="🔴 Session Ended",
@@ -1039,6 +1069,14 @@ class SessionManagementView(nextcord.ui.View):
         if not has_management_role(interaction.user):
             await interaction.response.send_message(
                 "❌ You are not permitted to use this feature. It is restricted to Management+ members of Illinois State Roleplay's Staff Team.",
+                ephemeral=True
+            )
+            return
+        
+        # Check if session is NOT active
+        if SESSION_MESSAGE_ID is None:
+            await interaction.response.send_message(
+                "Unable to use this session option. Please select a different one.",
                 ephemeral=True
             )
             return
@@ -1068,6 +1106,14 @@ class SessionManagementView(nextcord.ui.View):
         if not has_management_role(interaction.user):
             await interaction.response.send_message(
                 "❌ You are not permitted to use this feature. It is restricted to Management+ members of Illinois State Roleplay's Staff Team.",
+                ephemeral=True
+            )
+            return
+        
+        # Check if session is NOT active
+        if SESSION_MESSAGE_ID is None:
+            await interaction.response.send_message(
+                "Unable to use this session option. Please select a different one.",
                 ephemeral=True
             )
             return
