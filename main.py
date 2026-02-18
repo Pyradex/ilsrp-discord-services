@@ -605,26 +605,23 @@ async def lock_channel(ctx):
         await ctx.send(f"❌ {ctx.author.mention}, this channel is already locked!")
         return
     
-    # Store original permissions - only store send_messages for relevant roles
+    # Store original permissions for ALL roles with custom overwrites
     locked_channels[channel.id] = {}
     
-    # Apply lock - only update send_messages for the configured roles (not @everyone)
-    for role_id in LOCK_ROLES:
-        role = ctx.guild.get_role(role_id)
-        if role:
-            # Get current overwrite if exists
-            current_overwrite = channel.overwrites_for(role)
-            
-            # Store the original send_messages permission
-            locked_channels[channel.id][role.id] = {
-                'send_messages': current_overwrite.send_messages
-            }
-            
-            # Apply new permission - ONLY deny send_messages, don't touch other permissions
-            await channel.set_permissions(
-                role,
-                send_messages=False
-            )
+    # Get all permission overwrites for this channel
+    for target, overwrite in channel.overwrites.items():
+        # Skip if it's the @everyone role (we don't want to lock everyone)
+        if isinstance(target, nextcord.Role) and target.id == ctx.guild.default_role.id:
+            continue
+        # Store original send_messages permission for this role
+        locked_channels[channel.id][target.id] = {
+            'send_messages': overwrite.send_messages
+        }
+        # Set send_messages to False for this role
+        await channel.set_permissions(
+            target,
+            send_messages=False
+        )
     
     # Delete user's command message
     try:
@@ -670,27 +667,19 @@ async def unlock_channel(ctx):
         await ctx.send(f"❌ {ctx.author.mention}, this channel is not locked!")
         return
     
-    # Restore original permissions for each role (only send_messages)
+    # Restore original permissions for ALL roles
     original_overwrites = locked_channels[channel.id]
     
     for target_id, perms in original_overwrites.items():
-        if target_id == 'everyone':
-            # Restore @everyone role send_messages
-            everyone_role = ctx.guild.default_role
+        # Get the role by ID
+        role = ctx.guild.get_role(target_id)
+        if role:
+            # Restore the original send_messages permission
             send_messages = perms.get('send_messages', None)
             await channel.set_permissions(
-                everyone_role,
+                role,
                 send_messages=send_messages
             )
-        else:
-            # Restore role send_messages only
-            role = ctx.guild.get_role(target_id)
-            if role:
-                send_messages = perms.get('send_messages', None)
-                await channel.set_permissions(
-                    role,
-                    send_messages=send_messages
-                )
     
     # Remove from locked channels
     del locked_channels[channel.id]
@@ -737,22 +726,23 @@ async def lock_slash(interaction: nextcord.Interaction):
         )
         return
     
-    # Store original permissions - only store send_messages for relevant roles
+    # Store original permissions for ALL roles with custom overwrites
     locked_channels[channel.id] = {}
     
-    # Apply lock - only update send_messages for the configured roles (not @everyone)
-    for role_id in LOCK_ROLES:
-        role = interaction.guild.get_role(role_id)
-        if role:
-            current_overwrite = channel.overwrites_for(role)
-            locked_channels[channel.id][role_id] = {
-                'send_messages': current_overwrite.send_messages
-            }
-            # ONLY deny send_messages, don't touch other permissions
-            await channel.set_permissions(
-                role,
-                send_messages=False
-            )
+    # Get all permission overwrites for this channel
+    for target, overwrite in channel.overwrites.items():
+        # Skip if it's the @everyone role (we don't want to lock everyone)
+        if isinstance(target, nextcord.Role) and target.id == interaction.guild.default_role.id:
+            continue
+        # Store original send_messages permission for this role
+        locked_channels[channel.id][target.id] = {
+            'send_messages': overwrite.send_messages
+        }
+        # Set send_messages to False for this role
+        await channel.set_permissions(
+            target,
+            send_messages=False
+        )
     
     embed = nextcord.Embed(
         description=f"🔒 Channel locked by {interaction.user.mention}",
@@ -785,25 +775,19 @@ async def unlock_slash(interaction: nextcord.Interaction):
         )
         return
     
-    # Restore original permissions
+    # Restore original permissions for ALL roles
     original_overwrites = locked_channels[channel.id]
     
     for target_id, perms in original_overwrites.items():
-        if target_id == 'everyone':
-            everyone_role = interaction.guild.default_role
+        # Get the role by ID
+        role = interaction.guild.get_role(target_id)
+        if role:
+            # Restore the original send_messages permission
             send_messages = perms.get('send_messages', None)
             await channel.set_permissions(
-                everyone_role,
+                role,
                 send_messages=send_messages
             )
-        else:
-            role = interaction.guild.get_role(target_id)
-            if role:
-                send_messages = perms.get('send_messages', None)
-                await channel.set_permissions(
-                    role,
-                    send_messages=send_messages
-                )
     
     del locked_channels[channel.id]
     
