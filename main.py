@@ -845,10 +845,6 @@ SESSION_PING_ROLE_ID = 1473466540430200862
 # Staff role IDs for counting on-shift staff
 STAFF_ROLE_IDS = [1472041465365663976, 1472041617295806485]
 
-# Session message ID for auto-refresh (will be set when session starts)
-SESSION_MESSAGE_ID = None
-SESSION_MESSAGE_CHANNEL_ID = None
-
 # Session refresh interval (in seconds) - 5 minutes
 SESSION_REFRESH_INTERVAL = 300
 
@@ -921,7 +917,7 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Check if session is already active
-        if SESSION_MESSAGE_ID is not None:
+        if hasattr(bot, 'session_message_id') and bot.session_message_id is not None:
             await interaction.response.send_message(
                 "Unable to use this session option. Please select a different one.",
                 ephemeral=True
@@ -942,7 +938,7 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Check if session is already active
-        if SESSION_MESSAGE_ID is not None:
+        if hasattr(bot, 'session_message_id') and bot.session_message_id is not None:
             await interaction.response.send_message(
                 "Unable to use this session option. Please select a different one.",
                 ephemeral=True
@@ -1023,7 +1019,7 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Check if session is NOT active (can't shutdown if no session)
-        if SESSION_MESSAGE_ID is None:
+        if not hasattr(bot, 'session_message_id') or bot.session_message_id is None:
             await interaction.response.send_message(
                 "Unable to use this session option. Please select a different one.",
                 ephemeral=True
@@ -1038,9 +1034,8 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Clear the session message ID to stop auto-refresh
-        global SESSION_MESSAGE_ID, SESSION_MESSAGE_CHANNEL_ID
-        SESSION_MESSAGE_ID = None
-        SESSION_MESSAGE_CHANNEL_ID = None
+        bot.session_message_id = None
+        bot.session_message_channel_id = None
         
         # Delete all messages in the session channel except the pinned message
         try:
@@ -1074,7 +1069,7 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Check if session is NOT active
-        if SESSION_MESSAGE_ID is None:
+        if not hasattr(bot, 'session_message_id') or bot.session_message_id is None:
             await interaction.response.send_message(
                 "Unable to use this session option. Please select a different one.",
                 ephemeral=True
@@ -1111,7 +1106,7 @@ class SessionManagementView(nextcord.ui.View):
             return
         
         # Check if session is NOT active
-        if SESSION_MESSAGE_ID is None:
+        if not hasattr(bot, 'session_message_id') or bot.session_message_id is None:
             await interaction.response.send_message(
                 "Unable to use this session option. Please select a different one.",
                 ephemeral=True
