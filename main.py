@@ -1000,9 +1000,8 @@ class SessionManagementView(nextcord.ui.View):
         )
         
         # Store the session message ID for auto-refresh
-        global SESSION_MESSAGE_ID, SESSION_MESSAGE_CHANNEL_ID
-        SESSION_MESSAGE_ID = session_message.id
-        SESSION_MESSAGE_CHANNEL_ID = session_channel.id
+        bot.session_message_id = session_message.id
+        bot.session_message_channel_id = session_channel.id
         
         # Start the auto-refresh background task
         bot.loop.create_task(refresh_session_message())
@@ -1155,20 +1154,36 @@ class SessionVoteModal(nextcord.ui.Modal):
             await interaction.followup.send("❌ Session channel not found.", ephemeral=True)
             return
         
-        # Create vote embed
-        embed = nextcord.Embed(
-            title="🗳️ Session Vote",
-            description=f"**{interaction.user.mention}** is starting a session vote!\n\n"
-                       f"React with {CHECKMARK_EMOJI} to vote!\n\n"
-                       f"**Votes: 0/{required_votes}**",
-            color=BLUE,
+        # Delete all messages in the session channel except the pinned message
+        try:
+            async for message in session_channel.history(limit=100):
+                if message.id != SESSION_PINNED_MESSAGE_ID:
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+        except:
+            pass
+        
+        # Sky blue color for embed sidebar
+        SKY_BLUE = 0x87CEEB
+        
+        # Create TWO embeds with sky blue sidebar
+        # Embed 1 - Image with sky blue sidebar
+        image_embed = nextcord.Embed(color=SKY_BLUE)
+        image_embed.set_image(url=SESSION_IMAGE_URL)
+        
+        # Embed 2 - Text content with vote info
+        text_embed = nextcord.Embed(
+            title="__ILSRP・Session Voting__",
+            description=f"> A Session Vote has been conducted by the Management Team+. React with {CHECKMARK_EMOJI} in order to vote. Once **{required_votes}** votes have been reacted, a session will begin! Thanks for voting and remain patient.\n\nSee you soon! <a:ILSRP:1471990869166002291>",
+            color=SKY_BLUE,
             timestamp=utcnow()
         )
-        embed.set_author(name=f"{interaction.user}", icon_url=interaction.user.display_avatar.url)
         
         vote_message = await session_channel.send(
             content=f"<@&{SESSION_PING_ROLE_ID}>",
-            embeds=[image_embed, embed]
+            embeds=[image_embed, text_embed]
         )
         
         # Add checkmark reaction
@@ -1259,11 +1274,6 @@ class StartSessionButton(nextcord.ui.View):
             timestamp=utcnow()
         )
         
-        await session_channel.send(
-            embeds=[image_embed, session_embed]
-        )
-        
-        # Update the original vote message
         try:
             original_channel = interaction.guild.get_channel(SESSION_CHANNEL_ID)
             if original_channel:
@@ -1280,9 +1290,8 @@ class StartSessionButton(nextcord.ui.View):
             pass
         
         # Store the session message ID for auto-refresh
-        global SESSION_MESSAGE_ID, SESSION_MESSAGE_CHANNEL_ID
-        SESSION_MESSAGE_ID = session_message.id
-        SESSION_MESSAGE_CHANNEL_ID = session_channel.id
+        bot.session_message_id = session_message.id
+        bot.session_message_channel_id = session_channel.id
         
         # Start the auto-refresh background task
         bot.loop.create_task(refresh_session_message())
@@ -1336,27 +1345,40 @@ async def on_raw_reaction_add(payload):
     initiator = channel.guild.get_member(vote_info["initiator"])
     initiator_mention = initiator.mention if initiator else "Unknown"
     
-    embed = nextcord.Embed(
-        title="🗳️ Session Vote",
-        description=f"**{initiator_mention}** is starting a session vote!\n\n"
-                   f"React with {CHECKMARK_EMOJI} to vote!\n\n"
-                   f"**Votes: {current_votes}/{required_votes}**",
-        color=BLUE,
-        timestamp=utcnow()
-    )
-    embed.set_author(name=f"{initiator}", icon_url=initiator.display_avatar.url if initiator else None)
+    # Sky blue color
+    SKY_BLUE = 0x87CEEB
+    
+    # Create TWO embeds
+    # Embed 1 - Image with sky blue sidebar
+    image_embed = nextcord.Embed(color=SKY_BLUE)
+    image_embed.set_image(url=SESSION_IMAGE_URL)
     
     # Check if vote threshold reached
     if current_votes >= required_votes:
         # Add Start Session button
         view = StartSessionButton(vote_info["initiator"])
-        embed.description = f"**{initiator_mention}**'s session vote has passed!\n\n" \
-                           f"✅ **{current_votes}/{required_votes}** votes reached!\n\n" \
-                           f"Click below to start the session:"
-        embed.color = 0x00FF00
-        await message.edit(embed=embed, view=view)
+        
+        # Text embed - Vote passed
+        text_embed = nextcord.Embed(
+            title="__ILSRP・Session Voting__",
+            description=f"> A Session Vote has been conducted by the Management Team+. React with {CHECKMARK_EMOJI} in order to vote. Once **{required_votes}** votes have been reacted, a session will begin! Thanks for voting and remain patient.\n\n✅ **{current_votes}/{required_votes}** votes reached!\n\nClick below to start the session:",
+            color=0x00FF00,
+            timestamp=utcnow()
+        )
+        
+        # Ping the initiator when threshold is reached
+        await channel.send(content=f"{initiator_mention}")
+        await message.edit(embeds=[image_embed, text_embed], view=view)
     else:
-        await message.edit(embed=embed)
+        # Text embed - Vote in progress
+        text_embed = nextcord.Embed(
+            title="__ILSRP・Session Voting__",
+            description=f"> A Session Vote has been conducted by the Management Team+. React with {CHECKMARK_EMOJI} in order to vote. Once **{required_votes}** votes have been reacted, a session will begin! Thanks for voting and remain patient.\n\n**Votes: {current_votes}/{required_votes}**",
+            color=SKY_BLUE,
+            timestamp=utcnow()
+        )
+        
+        await message.edit(embeds=[image_embed, text_embed])
 
 @bot.slash_command(name="sessions", description="Manage server sessions")
 async def session_management(interaction: nextcord.Interaction):
@@ -1391,11 +1413,11 @@ async def session_management(interaction: nextcord.Interaction):
 async def refresh_session_message():
     """Automatically refresh the session message with updated stats every 5 minutes"""
     while not bot.is_closed():
-        if SESSION_MESSAGE_ID and SESSION_MESSAGE_CHANNEL_ID:
+        if hasattr(bot, 'session_message_id') and bot.session_message_id and hasattr(bot, 'session_message_channel_id') and bot.session_message_channel_id:
             try:
-                channel = bot.get_channel(SESSION_MESSAGE_CHANNEL_ID)
+                channel = bot.get_channel(bot.session_message_channel_id)
                 if channel:
-                    message = await channel.fetch_message(SESSION_MESSAGE_ID)
+                    message = await channel.fetch_message(bot.session_message_id)
                     
                     # Get fresh stats
                     stats = await get_erlc_stats()
