@@ -809,7 +809,15 @@ async def sendpanel(interaction: nextcord.Interaction):
         color=nextcord.Color.blue()
     )
 
-    await interaction.channel.send(
+    target_channel = bot.get_channel(1471666959753154646)
+    if not target_channel:
+        await interaction.response.send_message(
+            "❌ Could not find the target channel.",
+            ephemeral=True
+        )
+        return
+
+    await target_channel.send(
         embed=embed,
         view=TicketPanel()
     )
