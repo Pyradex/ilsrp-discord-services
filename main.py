@@ -40,6 +40,7 @@ intents.reactions = True
 bot = commands.Bot(command_prefix=";", intents=intents)
 
 LOG_CHANNEL_ID = 1473167409505374220  # Logging channel
+MEMBER_COUNT_CHANNEL_ID = 1471998856806797524  # Voice channel to show member count
 BLUE = 0x4bbfff
 
 # =========================================================
@@ -499,6 +500,17 @@ async def on_member_join(member):
         )
 
         await channel.send(content=member.mention, embeds=[image_embed, welcome_embed])
+    
+    # Update member count channel
+    await update_member_count(member.guild)
+
+# ------------------------------
+# Member leave event
+# ------------------------------
+@bot.event
+async def on_member_remove(member):
+    # Update member count channel when a member leaves
+    await update_member_count(member.guild)
 
 # ------------------------------
 # Command Logging Helper
@@ -925,6 +937,169 @@ async def requesttraining_slash(interaction: nextcord.Interaction):
         f"✅ {interaction.user.mention}, your training request has been sent!",
         ephemeral=True
     )
+
+# =========================================================
+# ====================== NICK COMMAND ====================
+# =========================================================
+
+# Allowed user IDs for ;nick command
+NICK_COMMAND_ALLOWED_USERS = [
+    1472072792081170682,  # Evaluation
+    1471641790112333867,  # Supervision
+    1471641915215843559,  # Management
+    1471642126663024640,  # Executive
+    1471642360503992411,  # Holding
+]
+
+# Role hierarchy positions (higher number = higher rank)
+ROLE_HIERARCHY = {
+    1471642360503992411: 5,  # Holding
+    1471642126663024640: 4,  # Executive
+    1471641915215843559: 3,  # Management
+    1471641790112333867: 2,  # Supervision
+    1472072792081170682: 1,  # Evaluation
+}
+
+def get_member_top_role_position(member):
+    """Get the highest role position for a member based on the hierarchy."""
+    member_role_ids = [role.id for role in member.roles]
+    
+    max_position = 0
+    for role_id in member_role_ids:
+        if role_id in ROLE_HIERARCHY:
+            if ROLE_HIERARCHY[role_id] > max_position:
+                max_position = ROLE_HIERARCHY[role_id]
+    
+    return max_position
+
+def can_change_nickname(executor, target):
+    """Check if the executor can change the target's nickname."""
+    executor_position = get_member_top_role_position(executor)
+    target_position = get_member_top_role_position(target)
+    
+    # Executor must have at least Evaluation level (position 1)
+    if executor_position == 0:
+        return False
+    
+    # Target cannot have a higher position than executor
+    if target_position > executor_position:
+        return False
+    
+    return True
+
+@bot.command(name="nick")
+async def nick_command(ctx, member: nextcord.Member, *, new_nickname: str):
+    """Change a member's nickname. Usage: ;nick @member new_nickname"""
+    await log_command(ctx.author, "nick", "Prefix")
+    
+    # Check if the user is in the allowed list
+    if ctx.author.id not in NICK_COMMAND_ALLOWED_USERS:
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        # Send error message and delete it after 5 seconds
+        error_msg = await ctx.send(
+            f"{ctx.author.mention}, you do not have the proper permissions to use this command. You must be an Intern Evaluator+ of the staff-team in order to use it."
+        )
+        await error_msg.delete(delay=5)
+        return
+    
+    # Check if the target's top role is above the executor's top role
+    if not can_change_nickname(ctx.author, member):
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        # Send error message and delete it after 5 seconds
+        error_msg = await ctx.send(
+            f"Unfortunately {ctx.author.mention}, you are unable to change the nickname, since they are ranked higher than you."
+        )
+        await error_msg.delete(delay=5)
+        return
+    
+    # Change the nickname
+    old_nickname = member.display_name
+    try:
+        await member.edit(nick=new_nickname)
+        
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        # Send success message
+        success_msg = await ctx.send(
+            f"✅ Successfully changed **{old_nickname}**'s nickname to **{new_nickname}**!"
+        )
+        await success_msg.delete(delay=5)
+        
+    except nextcord.Forbidden:
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        error_msg = await ctx.send(
+            f"❌ {ctx.author.mention}, I don't have permission to change this member's nickname."
+        )
+        await error_msg.delete(delay=5)
+    except Exception as e:
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        error_msg = await ctx.send(
+            f"❌ An error occurred: {str(e)}"
+        )
+        await error_msg.delete(delay=5)
+
+# ------------------------------
+# NICK SLASH COMMAND
+# ------------------------------
+@bot.slash_command(name="nick", description="Change a member's nickname")
+async def nick_slash(interaction: nextcord.Interaction, member: nextcord.Member, new_nickname: str):
+    """Change a member's nickname. Usage: /nick @member new_nickname"""
+    await log_command(interaction.user, "nick", "Slash")
+    
+    # Check if the user is in the allowed list
+    if interaction.user.id not in NICK_COMMAND_ALLOWED_USERS:
+        await interaction.response.send_message(
+            f"{interaction.user.mention}, you do not have the proper permissions to use this command. You must be an Intern Evaluator+ of the staff-team in order to use it.",
+            ephemeral=True
+        )
+        return
+    
+    # Check if the target's top role is above the executor's top role
+    if not can_change_nickname(interaction.user, member):
+        await interaction.response.send_message(
+            f"Unfortunately {interaction.user.mention}, you are unable to change the nickname, since they are ranked higher than you.",
+            ephemeral=True
+        )
+        return
+    
+    # Change the nickname
+    old_nickname = member.display_name
+    try:
+        await member.edit(nick=new_nickname)
+        await interaction.response.send_message(
+            f"✅ Successfully changed **{old_nickname}**'s nickname to **{new_nickname}**!",
+            ephemeral=True
+        )
+    except nextcord.Forbidden:
+        await interaction.response.send_message(
+            f"❌ {interaction.user.mention}, I don't have permission to change this member's nickname.",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ An error occurred: {str(e)}",
+            ephemeral=True
+        )
 
 # =========================================================
 # ====================== TICKET SYSTEM ====================
@@ -1977,6 +2152,42 @@ async def refresh_vote_messages():
         await asyncio.sleep(60)  # Refresh every minute
 
 # ------------------------------
+# Member count update function
+# ------------------------------
+async def update_member_count(guild):
+    """Update the voice channel name with the non-bot member count"""
+    try:
+        channel = bot.get_channel(MEMBER_COUNT_CHANNEL_ID)
+        if channel:
+            # Count non-bot members
+            member_count = len([m for m in guild.members if not m.bot])
+            # Update channel name (max 100 characters for channel names)
+            new_name = f"Members: {member_count}"
+            if len(new_name) > 100:
+                new_name = f"Members: {member_count}"[:100]
+            await channel.edit(name=new_name)
+            print(f"Updated member count channel to: {new_name}")
+    except Exception as e:
+        print(f"Error updating member count channel: {e}")
+
+# ------------------------------
+# Periodic member count update task
+# ------------------------------
+async def update_member_count_periodic():
+    """Periodically update the member count channel"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            # Get the guild from the channel
+            channel = bot.get_channel(MEMBER_COUNT_CHANNEL_ID)
+            if channel and channel.guild:
+                await update_member_count(channel.guild)
+        except Exception as e:
+            print(f"Error in periodic member count update: {e}")
+        # Update every 60 seconds
+        await asyncio.sleep(60)
+
+# ------------------------------
 # Keep-alive / Activity Logistic
 # ------------------------------
 @bot.event
@@ -1993,6 +2204,14 @@ async def on_ready():
     
     # Start the vote auto-refresh task
     bot.loop.create_task(refresh_vote_messages())
+    
+    # Start the member count update task
+    bot.loop.create_task(update_member_count_periodic())
+    
+    # Initial member count update on startup
+    member_count_channel = bot.get_channel(MEMBER_COUNT_CHANNEL_ID)
+    if member_count_channel and member_count_channel.guild:
+        await update_member_count(member_count_channel.guild)
     
     # Send deployment notification message once on startup
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
