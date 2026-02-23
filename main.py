@@ -43,6 +43,73 @@ LOG_CHANNEL_ID = 1473167409505374220  # Logging channel
 MEMBER_COUNT_CHANNEL_ID = 1471998856806797524  # Voice channel to show member count
 BLUE = 0x4bbfff
 
+# ------------------------------
+# Channel Restriction System
+# ------------------------------
+# Role that grants command permissions
+COMMAND_PERMISSION_ROLE_ID = 1473799316782055424
+
+# Allowed bot channels for command usage
+BOT_CHANNEL_IDS = [
+    1471648116330725466,
+    1471648700735553830,
+]
+
+# Executive and Holding roles that can use commands anywhere
+EXECUTIVE_HOLDING_ROLE_IDS = [
+    1471642126663024640,  # Executive
+    1471642360503992411,  # Holding
+]
+
+def can_use_commands_in_channel(member, channel_id):
+    """Check if member can use commands in the given channel."""
+    member_role_ids = [role.id for role in member.roles]
+    
+    # Executive and Holding roles can use commands anywhere
+    if any(rid in member_role_ids for rid in EXECUTIVE_HOLDING_ROLE_IDS):
+        return True
+    
+    # Check if member has the command permission role
+    if COMMAND_PERMISSION_ROLE_ID not in member_role_ids:
+        return False
+    
+    # Check if the channel is a bot channel
+    if channel_id in BOT_CHANNEL_IDS:
+        return True
+    
+    return False
+
+# ------------------------------
+# Command Channel Restriction Listener
+# ------------------------------
+@bot.check
+async def command_channel_check(ctx):
+    """Check if the command can be used in this channel."""
+    # Allow DM commands
+    if isinstance(ctx.channel, nextcord.DMChannel):
+        return True
+    
+    # Allow bot owner
+    if await bot.is_owner(ctx.author):
+        return True
+    
+    # Check if user can use commands in this channel
+    if not can_use_commands_in_channel(ctx.author, ctx.channel.id):
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        # Send error message and delete it after 5 seconds
+        error_msg = await ctx.send(
+            f"{ctx.author.mention}, this command can only be used in <#1471648116330725466> or <#1471648700735553830>."
+        )
+        await error_msg.delete(delay=5)
+        return False
+    
+    return True
+
 # =========================================================
 # =================== PROMOTION SYSTEM ====================
 # =========================================================
@@ -1031,11 +1098,25 @@ async def nick_command(ctx, member: nextcord.Member, *, new_nickname: str):
         except:
             pass
         
-        # Send success message
-        success_msg = await ctx.send(
-            f"✅ Successfully changed **{old_nickname}**'s nickname to **{new_nickname}**!"
+        # Send success message with embeds
+        # Embed 1 - Title
+        title_embed = nextcord.Embed(
+            title="## __Member Nickname Update__",
+            color=BLUE
         )
-        await success_msg.delete(delay=5)
+        
+        # Embed 2 - Details
+        details_embed = nextcord.Embed(
+            description=f"{member.mention}'s nickname has been updated to **{new_nickname}** by {ctx.author.mention}",
+            color=BLUE
+        )
+        
+        # Embed 3 - Footer image
+        footer_embed = nextcord.Embed(color=BLUE)
+        footer_embed.set_image(url="https://cdn.discordapp.com/attachments/1472412365415776306/1475277452103258362/footerisrp.png?ex=699ce6b1&is=699b9531&hm=d0b11e03fb99f8ea16956ebe9e5e2b1bb657b5ea315c1f8638149f984325ca3a&")
+        
+        success_msg = await ctx.send(embeds=[title_embed, details_embed, footer_embed])
+        await success_msg.delete(delay=30)
         
     except nextcord.Forbidden:
         # Delete user's command message
@@ -2047,10 +2128,51 @@ async def session_management(interaction: nextcord.Interaction):
     view = SessionManagementView()
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+# ------------------------------
+# SESSIONS PREFIX COMMAND
+# ------------------------------
+@bot.command(name="sessions")
+async def sessions_prefix(ctx):
+    """Send the session management panel"""
+    await log_command(ctx.author, "sessions", "Prefix")
+    
+    if not has_management_role(ctx.author):
+        # Delete user's command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        # Send error message and delete it after 5 seconds
+        error_msg = await ctx.send(
+            "❌ You are not permitted to use this feature. It is restricted to Management+ members of Illinois State Roleplay's Staff Team."
+        )
+        await error_msg.delete(delay=5)
+        return
+    
+    embed = nextcord.Embed(
+        title="🎮 Session Management",
+        description="Select an action below:",
+        color=BLUE,
+        timestamp=utcnow()
+    )
+    embed.add_field(name="🗳️ Session Vote", value="Start a vote for a new session", inline=False)
+    embed.add_field(name="▶️ Session Start", value="Start a new session with ERLC stats", inline=False)
+    embed.add_field(name="⏹️ Session Shutdown", value="End the current session", inline=False)
+    embed.add_field(name="📢 Session Low", value="Ping for more players", inline=False)
+    embed.add_field(name="✅ Session Full", value="Mark session as full (no ping)", inline=False)
+    embed.set_footer(text="Illinois State Roleplay - Session Management")
 
-# ------------------------------
-# Session Auto-Refresh Function
-# ------------------------------
+    view = SessionManagementView()
+    
+    # Delete user's command message
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+    
+    # Send the panel as ephemeral (only visible to user)
+    await ctx.send(embed=embed, view=view)
+
 async def refresh_session_message():
     """Automatically refresh the session message with updated stats every 5 minutes"""
     while not bot.is_closed():
