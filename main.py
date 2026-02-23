@@ -6,6 +6,11 @@ import asyncio
 import chat_exporter
 import requests
 import json
+import sqlite3
+import random
+from datetime import datetime, timedelta
+from pytz import timezone
+import time
 
 # ------------------------------
 # Render Web Service Fix (IMPORTANT)
@@ -1010,7 +1015,8 @@ async def requesttraining_slash(interaction: nextcord.Interaction):
 # =========================================================
 
 # Allowed user IDs for ;nick command
-NICK_COMMAND_ALLOWED_USERS = [
+# Role IDs that can use the nick command (Intern Evaluator+)
+NICK_COMMAND_ALLOWED_ROLES = [
     1472072792081170682,  # Evaluation
     1471641790112333867,  # Supervision
     1471641915215843559,  # Management
@@ -1027,6 +1033,12 @@ ROLE_HIERARCHY = {
     1472072792081170682: 1,  # Evaluation
 }
 
+# Roles that cannot have their nicknames changed
+PROTECTED_ROLES = [
+    1471642126663024640,  # Executive
+    1471642360503992411,  # Holding
+]
+
 def get_member_top_role_position(member):
     """Get the highest role position for a member based on the hierarchy."""
     member_role_ids = [role.id for role in member.roles]
@@ -1041,26 +1053,49 @@ def get_member_top_role_position(member):
 
 def can_change_nickname(executor, target):
     """Check if the executor can change the target's nickname."""
+    executor_role_ids = [role.id for role in executor.roles]
+    target_role_ids = [role.id for role in target.roles]
+    
+    # Check if executor has Executive or Holding role
+    executor_is_exec_or_holding = any(rid in executor_role_ids for rid in [1471642126663024640, 1471642360503992411])
+    
+    # Check if target has Executive or Holding role
+    target_is_exec_or_holding = any(rid in target_role_ids for rid in [1471642126663024640, 1471642360503992411])
+    
+    # If target is Executive or Holding, executor MUST also be Executive or Holding
+    if target_is_exec_or_holding and not executor_is_exec_or_holding:
+        return False, "executor_below_associate_exec"
+    
+    # If target has Executive or Holding (and executor does too), cannot change
+    if target_is_exec_or_holding and executor_is_exec_or_holding:
+        return False, "target_protected"
+    
+    # Get positions for other hierarchy checks
     executor_position = get_member_top_role_position(executor)
     target_position = get_member_top_role_position(target)
     
     # Executor must have at least Evaluation level (position 1)
     if executor_position == 0:
-        return False
+        return False, "executor_no_role"
     
     # Target cannot have a higher position than executor
     if target_position > executor_position:
-        return False
+        return False, "target_higher"
     
-    return True
+    return True, None
+
+def has_nick_permission(member):
+    """Check if member has a role that allows using the nick command."""
+    member_role_ids = [role.id for role in member.roles]
+    return any(rid in member_role_ids for rid in NICK_COMMAND_ALLOWED_ROLES)
 
 @bot.command(name="nick")
 async def nick_command(ctx, member: nextcord.Member, *, new_nickname: str):
     """Change a member's nickname. Usage: ;nick @member new_nickname"""
     await log_command(ctx.author, "nick", "Prefix")
-    
-    # Check if the user is in the allowed list
-    if ctx.author.id not in NICK_COMMAND_ALLOWED_USERS:
+
+    # Check if the user has an allowed role (Intern Evaluator+)
+    if not has_nick_permission(ctx.author):
         # Delete user's command message
         try:
             await ctx.message.delete()
@@ -1072,18 +1107,28 @@ async def nick_command(ctx, member: nextcord.Member, *, new_nickname: str):
         )
         await error_msg.delete(delay=5)
         return
-    
-    # Check if the target's top role is above the executor's top role
-    if not can_change_nickname(ctx.author, member):
+
+    # Check if the target's nickname can be changed
+    can_change, reason = can_change_nickname(ctx.author, member)
+    if not can_change:
         # Delete user's command message
         try:
             await ctx.message.delete()
         except:
             pass
-        # Send error message and delete it after 5 seconds
-        error_msg = await ctx.send(
-            f"Unfortunately {ctx.author.mention}, you are unable to change the nickname, since they are ranked higher than you."
-        )
+        
+        if reason == "executor_below_associate_exec":
+            error_msg = await ctx.send(
+                f"{ctx.author.mention}, I do not have the appropriate permissions in order to run this command, since my roles are below Associate Executive+."
+            )
+        elif reason == "target_protected":
+            error_msg = await ctx.send(
+                f"Unfortunately {ctx.author.mention}, you are unable to change the nickname of this person as they are an Executive or Holding team member."
+            )
+        else:
+            error_msg = await ctx.send(
+                f"Unfortunately {ctx.author.mention}, you are unable to change the nickname, since they are ranked higher than you."
+            )
         await error_msg.delete(delay=5)
         return
     
@@ -1146,23 +1191,35 @@ async def nick_command(ctx, member: nextcord.Member, *, new_nickname: str):
 async def nick_slash(interaction: nextcord.Interaction, member: nextcord.Member, new_nickname: str):
     """Change a member's nickname. Usage: /nick @member new_nickname"""
     await log_command(interaction.user, "nick", "Slash")
-    
-    # Check if the user is in the allowed list
-    if interaction.user.id not in NICK_COMMAND_ALLOWED_USERS:
+
+    # Check if the user has an allowed role (Intern Evaluator+)
+    if not has_nick_permission(interaction.user):
         await interaction.response.send_message(
             f"{interaction.user.mention}, you do not have the proper permissions to use this command. You must be an Intern Evaluator+ of the staff-team in order to use it.",
             ephemeral=True
         )
         return
-    
-    # Check if the target's top role is above the executor's top role
-    if not can_change_nickname(interaction.user, member):
-        await interaction.response.send_message(
-            f"Unfortunately {interaction.user.mention}, you are unable to change the nickname, since they are ranked higher than you.",
-            ephemeral=True
-        )
+
+    # Check if the target's nickname can be changed
+    can_change, reason = can_change_nickname(interaction.user, member)
+    if not can_change:
+        if reason == "executor_below_associate_exec":
+            await interaction.response.send_message(
+                f"{interaction.user.mention}, I do not have the appropriate permissions in order to run this command, since my roles are below Associate Executive+.",
+                ephemeral=True
+            )
+        elif reason == "target_protected":
+            await interaction.response.send_message(
+                f"Unfortunately {interaction.user.mention}, you are unable to change the nickname of this person as they are an Executive or Holding team member.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"Unfortunately {interaction.user.mention}, you are unable to change the nickname, since they are ranked higher than you.",
+                ephemeral=True
+            )
         return
-    
+
     # Change the nickname
     old_nickname = member.display_name
     try:
@@ -1582,6 +1639,12 @@ class SessionManagementView(nextcord.ui.View):
         bot.session_message_id = session_message.id
         bot.session_message_channel_id = session_channel.id
         
+        # Track who started the session for DM system
+        active_sessions[interaction.user.id] = {
+            "start_time": int(time.time()),
+            "type": "start"
+        }
+        
         # Start the auto-refresh background task
         bot.loop.create_task(refresh_session_message())
         
@@ -1929,6 +1992,19 @@ class StartSessionButton(nextcord.ui.View):
         # Store the session message ID for auto-refresh
         bot.session_message_id = session_message.id
         bot.session_message_channel_id = session_channel.id
+        
+        # Track who started the session for DM system (from vote)
+        vote_info = None
+        for msg_id, info in bot.session_votes.items():
+            if info.get("initiator") == interaction.user.id:
+                vote_info = info
+                break
+        
+        if vote_info:
+            active_sessions[vote_info["initiator"]] = {
+                "start_time": int(time.time()),
+                "type": "vote"
+            }
         
         # Start the auto-refresh background task
         bot.loop.create_task(refresh_session_message())
@@ -2365,6 +2441,1239 @@ async def on_ready():
             await asyncio.sleep(60)
 
     bot.loop.create_task(keep_sending())
+    
+    # Start session DM check task
+    bot.loop.create_task(check_sessions())
+    
+    # Start scheduled verification task
+    bot.loop.create_task(scheduled_verification())
+
+# =========================================================
+# =================== DATABASE SETUP ======================
+# =========================================================
+
+# Economy Database
+conn = sqlite3.connect('economy.db')
+c = conn.cursor()
+
+# Create economy tables
+c.execute('''CREATE TABLE IF NOT EXISTS economy (
+    user_id INTEGER PRIMARY KEY,
+    wallet INTEGER DEFAULT 0,
+    bank INTEGER DEFAULT 0,
+    total_earned INTEGER DEFAULT 0,
+    daily_timestamp INTEGER DEFAULT 0,
+    weekly_timestamp INTEGER DEFAULT 0,
+    monthly_timestamp INTEGER DEFAULT 0,
+    work_timestamp INTEGER DEFAULT 0,
+    beg_timestamp INTEGER DEFAULT 0,
+    last_robbed INTEGER DEFAULT 0,
+   robbed_count INTEGER DEFAULT 0
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS economy_settings (
+    id INTEGER PRIMARY KEY,
+    starting_balance INTEGER DEFAULT 0,
+    daily_reward INTEGER DEFAULT 100,
+    weekly_reward INTEGER DEFAULT 500,
+    monthly_reward INTEGER DEFAULT 2000,
+    work_min INTEGER DEFAULT 10,
+    work_max INTEGER DEFAULT 50,
+    beg_min INTEGER DEFAULT 5,
+    beg_max INTEGER DEFAULT 25,
+    rob_min INTEGER DEFAULT 100,
+    rob_max INTEGER DEFAULT 500,
+    rob_cooldown INTEGER DEFAULT 3600,
+    tax_rate INTEGER DEFAULT 10
+)''')
+
+# Insert default settings if not exist
+c.execute("INSERT OR IGNORE INTO economy_settings (id, starting_balance, daily_reward, weekly_reward, monthly_reward, work_min, work_max, beg_min, beg_max, rob_min, rob_max, rob_cooldown, tax_rate) VALUES (1, 100, 100, 500, 2000, 10, 50, 5, 25, 100, 500, 3600, 10)")
+conn.commit()
+
+# AFK Database
+c.execute('''CREATE TABLE IF NOT EXISTS afk (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    start_time INTEGER,
+    pings TEXT DEFAULT '[]'
+)''')
+conn.commit()
+
+# Suggestions Database
+c.execute('''CREATE TABLE IF NOT EXISTS suggestions (
+    message_id INTEGER PRIMARY KEY,
+    channel_id INTEGER,
+    author_id INTEGER,
+    suggestion TEXT,
+    status TEXT DEFAULT 'pending',
+    upvotes INTEGER DEFAULT 0,
+    downvotes INTEGER DEFAULT 0,
+    approver_id INTEGER DEFAULT NULL,
+    approved_at INTEGER DEFAULT NULL
+)''')
+conn.commit()
+
+# Session DM System
+# Active sessions tracking
+active_sessions = {}  # {initiator_id: {"start_time": timestamp, "type": "vote" or "start"}}
+
+# =========================================================
+# =================== SESSION DM SYSTEM ===================
+# =========================================================
+
+# Session DM constants
+SESSION_CHECK_INTERVAL = 7200  # 2 hours in seconds
+MANAGEMENT_DM_TIMEOUT = 1800  # 30 minutes in seconds
+SESSION_SHUTDOWN_DELAY = 5  # 5 seconds
+
+class SessionActiveView(nextcord.ui.View):
+    def __init__(self, initiator_id):
+        super().__init__(timeout=1800)  # 30 min timeout
+        self.initiator_id = initiator_id
+    
+    @nextcord.ui.button(label="Yes, session is active", style=nextcord.ButtonStyle.success, emoji="✅")
+    async def yes_button(self, button, interaction):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("❌ Only the session initiator can respond.", ephemeral=True)
+            return
+        
+        # Restart the session timer
+        active_sessions[self.initiator_id]["start_time"] = int(time.time())
+        
+        await interaction.response.send_message("✅ Session timer restarted! The session will be checked again in 2 hours.", ephemeral=True)
+        self.stop()
+    
+    @nextcord.ui.button(label="No, end the session", style=nextcord.ButtonStyle.danger, emoji="⏹️")
+    async def no_button(self, button, interaction):
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message("❌ Only the session initiator can respond.", ephemeral=True)
+            return
+        
+        # Shutdown session
+        await shutdown_session(interaction.user, interaction.guild)
+        
+        await interaction.response.send_message("✅ Session has been shut down.", ephemeral=True)
+        self.stop()
+
+async def check_sessions():
+    """Background task to check active sessions every minute"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        current_time = int(time.time())
+        sessions_to_check = []
+        
+        for initiator_id, session_data in list(active_sessions.items()):
+            start_time = session_data.get("start_time", 0)
+            if current_time - start_time >= SESSION_CHECK_INTERVAL:
+                sessions_to_check.append((initiator_id, session_data))
+        
+        for initiator_id, session_data in sessions_to_check:
+            try:
+                guild = bot.guilds[0]  # Get the guild
+                initiator = guild.get_member(initiator_id)
+                
+                if initiator:
+                    # Send DM to initiator
+                    embed = nextcord.Embed(
+                        title="Session Check",
+                        description="Is the session still currently active?",
+                        color=BLUE
+                    )
+                    view = SessionActiveView(initiator_id)
+                    try:
+                        await initiator.send(embed=embed, view=view)
+                    except:
+                        # If DM fails, proceed to shutdown
+                        await shutdown_session(initiator, guild)
+                
+                # Wait for response or timeout
+                await asyncio.sleep(MANAGEMENT_DM_TIMEOUT)
+                
+                # Check if session is still active after timeout
+                if initiator_id in active_sessions:
+                    # DM all Management role members who are NOT invisible/AFK
+                    await dm_management_team(guild)
+                    
+                    # Wait another 30 minutes for management response
+                    await asyncio.sleep(MANAGEMENT_DM_TIMEOUT)
+                    
+                    # If still active, shutdown
+                    if initiator_id in active_sessions:
+                        await shutdown_session(initiator, guild)
+                        
+            except Exception as e:
+                print(f"Error in session check: {e}")
+        
+        await asyncio.sleep(60)  # Check every minute
+
+async def dm_management_team(guild):
+    """DM all Management role members who are not invisible/AFK"""
+    management_role = guild.get_role(1471641915215843559)
+    if not management_role:
+        return
+    
+    embed = nextcord.Embed(
+        title="Session Check",
+        description="Is the session still currently active? The session initiator has not responded. Please respond if the session should continue.",
+        color=BLUE
+    )
+    
+    view = ManagementSessionView(list(management_role.members))
+    
+    for member in management_role.members:
+        # Check if member is not invisible/afk (based on status)
+        if member.status != nextcord.Status.offline:
+            try:
+                await member.send(embed=embed, view=view)
+            except:
+                pass
+
+class ManagementSessionView(nextcord.ui.View):
+    def __init__(self, members):
+        super().__init__(timeout=1800)
+        self.responded_members = []
+        self.members = members
+    
+    @nextcord.ui.button(label="Yes, keep session", style=nextcord.ButtonStyle.success, emoji="✅")
+    async def yes_button(self, button, interaction):
+        if interaction.user.id in self.responded_members:
+            await interaction.response.send_message("You have already responded!", ephemeral=True)
+            return
+        
+        self.responded_members.append(interaction.user.id)
+        await interaction.response.send_message("✅ Thank you! The session will continue.", ephemeral=True)
+    
+    @nextcord.ui.button(label="No, shutdown", style=nextcord.ButtonStyle.danger, emoji="⏹️")
+    async def no_button(self, button, interaction):
+        if interaction.user.id in self.responded_members:
+            await interaction.response.send_message("You have already responded!", ephemeral=True)
+            return
+        
+        self.responded_members.append(interaction.user.id)
+        await shutdown_session(interaction.user, interaction.guild)
+        await interaction.response.send_message("✅ Session has been shut down.", ephemeral=True)
+        self.stop()
+
+async def shutdown_session(user, guild):
+    """Shutdown the session and send the thank you message"""
+    # Remove from active sessions
+    for initiator_id in list(active_sessions.keys()):
+        if active_sessions[initiator_id].get("start_time"):
+            del active_sessions[initiator_id]
+    
+    # Clear session message ID
+    bot.session_message_id = None
+    bot.session_message_channel_id = None
+    
+    # Clear any active votes
+    if hasattr(bot, 'session_votes'):
+        bot.session_votes = {}
+    
+    # Delete messages in session channel
+    session_channel = guild.get_channel(SESSION_CHANNEL_ID)
+    if session_channel:
+        try:
+            async for message in session_channel.history(limit=100):
+                if message.id != SESSION_PINNED_MESSAGE_ID:
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+        except:
+            pass
+    
+    # Wait 5 seconds then send shutdown message
+    await asyncio.sleep(SESSION_SHUTDOWN_DELAY)
+    
+    if session_channel:
+        await session_channel.send("Thanks for joining us today. See you soon")
+
+# Modify session_start to track initiator
+original_session_start = None
+
+# We need to modify the session start functions to track who started the session
+# This will be handled in the SessionManagementView class modifications
+
+# =========================================================
+# =================== ECONOMY SYSTEM =====================
+# =========================================================
+
+def get_economy_settings():
+    c.execute("SELECT * FROM economy_settings WHERE id = 1")
+    result = c.fetchone()
+    if result:
+        return {
+            "starting_balance": result[1],
+            "daily_reward": result[2],
+            "weekly_reward": result[3],
+            "monthly_reward": result[4],
+            "work_min": result[5],
+            "work_max": result[6],
+            "beg_min": result[7],
+            "beg_max": result[8],
+            "rob_min": result[9],
+            "rob_max": result[10],
+            "rob_cooldown": result[11],
+            "tax_rate": result[12]
+        }
+    return {
+        "starting_balance": 100,
+        "daily_reward": 100,
+        "weekly_reward": 500,
+        "monthly_reward": 2000,
+        "work_min": 10,
+        "work_max": 50,
+        "beg_min": 5,
+        "beg_max": 25,
+        "rob_min": 100,
+        "rob_max": 500,
+        "rob_cooldown": 3600,
+        "tax_rate": 10
+    }
+
+def get_user_economy(user_id):
+    c.execute("SELECT * FROM economy WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    if not result:
+        settings = get_economy_settings()
+        c.execute("INSERT INTO economy (user_id, wallet, bank, total_earned, daily_timestamp, weekly_timestamp, monthly_timestamp, work_timestamp, beg_timestamp, last_robbed, robbed_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, settings["starting_balance"], 0, settings["starting_balance"], 0, 0, 0, 0, 0, 0, 0))
+        conn.commit()
+        return {
+            "wallet": settings["starting_balance"],
+            "bank": 0,
+            "total_earned": settings["starting_balance"],
+            "daily_timestamp": 0,
+            "weekly_timestamp": 0,
+            "monthly_timestamp": 0,
+            "work_timestamp": 0,
+            "beg_timestamp": 0,
+            "last_robbed": 0,
+            "robbed_count": 0
+        }
+    return {
+        "wallet": result[1],
+        "bank": result[2],
+        "total_earned": result[3],
+        "daily_timestamp": result[4],
+        "weekly_timestamp": result[5],
+        "monthly_timestamp": result[6],
+        "work_timestamp": result[7],
+        "beg_timestamp": result[8],
+        "last_robbed": result[9],
+        "robbed_count": result[10]
+    }
+
+def update_economy(user_id, wallet=None, bank=None, total_earned=None, daily_timestamp=None, weekly_timestamp=None, monthly_timestamp=None, work_timestamp=None, beg_timestamp=None, last_robbed=None, robbed_count=None):
+    current = get_user_economy(user_id)
+    if wallet is not None:
+        current["wallet"] = wallet
+    if bank is not None:
+        current["bank"] = bank
+    if total_earned is not None:
+        current["total_earned"] = total_earned
+    if daily_timestamp is not None:
+        current["daily_timestamp"] = daily_timestamp
+    if weekly_timestamp is not None:
+        current["weekly_timestamp"] = weekly_timestamp
+    if monthly_timestamp is not None:
+        current["monthly_timestamp"] = monthly_timestamp
+    if work_timestamp is not None:
+        current["work_timestamp"] = work_timestamp
+    if beg_timestamp is not None:
+        current["beg_timestamp"] = beg_timestamp
+    if last_robbed is not None:
+        current["last_robbed"] = last_robbed
+    if robbed_count is not None:
+        current["robbed_count"] = robbed_count
+    
+    c.execute("UPDATE economy SET wallet = ?, bank = ?, total_earned = ?, daily_timestamp = ?, weekly_timestamp = ?, monthly_timestamp = ?, work_timestamp = ?, beg_timestamp = ?, last_robbed = ?, robbed_count = ? WHERE user_id = ?",
+        (current["wallet"], current["bank"], current["total_earned"], current["daily_timestamp"], current["weekly_timestamp"], current["monthly_timestamp"], current["work_timestamp"], current["beg_timestamp"], current["last_robbed"], current["robbed_count"], user_id))
+    conn.commit()
+
+# Economy Commands
+@bot.slash_command(name="balance", description="Check your economy balance")
+async def balance(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    embed = nextcord.Embed(
+        title=f"{interaction.user.name}'s Balance",
+        color=BLUE
+    )
+    embed.add_field(name="💰 Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    embed.add_field(name="🏦 Bank", value=f"${user_data['bank']:,}", inline=True)
+    embed.add_field(name="💎 Total Earned", value=f"${user_data['total_earned']:,}", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="deposit", description="Deposit money to your bank")
+async def deposit(interaction: nextcord.Interaction, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("❌ Amount must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < amount:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    update_economy(interaction.user.id, wallet=user_data["wallet"] - amount, bank=user_data["bank"] + amount)
+    
+    embed = nextcord.Embed(
+        title="💰 Deposit Successful",
+        description=f"Deposited **${amount:,}** to your bank.",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="withdraw", description="Withdraw money from your bank")
+async def withdraw(interaction: nextcord.Interaction, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("❌ Amount must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["bank"] < amount:
+        await interaction.response.send_message("❌ Insufficient funds in bank!", ephemeral=True)
+        return
+    
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + amount, bank=user_data["bank"] - amount)
+    
+    embed = nextcord.Embed(
+        title="🏦 Withdraw Successful",
+        description=f"Withdrew **${amount:,}** from your bank.",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="daily", description="Claim your daily reward")
+async def daily(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["daily_timestamp"] < 86400:  # 24 hours
+        remaining = 86400 - (current_time - user_data["daily_timestamp"])
+        hours = remaining // 3600
+        minutes = (remaining % 3600) // 60
+        await interaction.response.send_message(f"❌ You can claim your daily reward in {hours}h {minutes}m.", ephemeral=True)
+        return
+    
+    reward = settings["daily_reward"]
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, daily_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Daily Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="weekly", description="Claim your weekly reward")
+async def weekly(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["weekly_timestamp"] < 604800:  # 7 days
+        await interaction.response.send_message("❌ You can claim your weekly reward in 7 days.", ephemeral=True)
+        return
+    
+    reward = settings["weekly_reward"]
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, weekly_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Weekly Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="monthly", description="Claim your monthly reward")
+async def monthly(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["monthly_timestamp"] < 2592000:  # 30 days
+        await interaction.response.send_message("❌ You can claim your monthly reward in 30 days.", ephemeral=True)
+        return
+    
+    reward = settings["monthly_reward"]
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, monthly_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Monthly Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="work", description="Work to earn money")
+async def work(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["work_timestamp"] < 3600:  # 1 hour
+        remaining = 3600 - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        await interaction.response.send_message(f"❌ You can work again in {minutes} minutes.", ephemeral=True)
+        return
+    
+    earnings = random.randint(settings["work_min"], settings["work_max"])
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, work_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="💼 Work Complete",
+        description=f"You earned **${earnings:,}** from working!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="beg", description="Beg for money")
+async def beg(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["beg_timestamp"] < 300:  # 5 minutes
+        remaining = 300 - (current_time - user_data["beg_timestamp"])
+        await interaction.response.send_message(f"❌ You can beg again in {remaining} seconds.", ephemeral=True)
+        return
+    
+    earnings = random.randint(settings["beg_min"], settings["beg_max"])
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, beg_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="🙏 You begged...",
+        description=f"Someone gave you **${earnings:,}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="rob", description="Rob someone")
+async def rob(interaction: nextcord.Interaction, member: nextcord.Member):
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("❌ You can't rob yourself!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    target_data = get_user_economy(member.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["last_robbed"] < settings["rob_cooldown"]:
+        remaining = settings["rob_cooldown"] - (current_time - user_data["last_robbed"])
+        minutes = remaining // 60
+        await interaction.response.send_message(f"❌ You can rob again in {minutes} minutes.", ephemeral=True)
+        return
+    
+    if target_data["wallet"] < 50:
+        await interaction.response.send_message(f"❌ {member.name} doesn't have enough money to rob!", ephemeral=True)
+        return
+    
+    # 50% chance to succeed
+    if random.random() < 0.5:
+        stolen = random.randint(settings["rob_min"], min(settings["rob_max"], target_data["wallet"]))
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + stolen, total_earned=user_data["total_earned"] + stolen, last_robbed=current_time)
+        update_economy(member.id, wallet=target_data["wallet"] - stolen)
+        
+        embed = nextcord.Embed(
+            title="💰 Robbery Successful!",
+            description=f"You stole **${stolen:,}** from {member.name}!",
+            color=BLUE
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        fine = random.randint(50, 200)
+        if user_data["wallet"] >= fine:
+            update_economy(interaction.user.id, wallet=user_data["wallet"] - fine, last_robbed=current_time)
+            embed = nextcord.Embed(
+                title="🚨 Robbery Failed!",
+                description=f"You were caught and fined **${fine:,}**!",
+                color=0xFF0000
+            )
+        else:
+            update_economy(interaction.user.id, wallet=0, last_robbed=current_time)
+            embed = nextcord.Embed(
+                title="🚨 Robbery Failed!",
+                description=f"You were caught! You had **${user_data['wallet']:,}** seized!",
+                color=0xFF0000
+            )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="transfer", description="Transfer money to another user")
+async def transfer(interaction: nextcord.Interaction, member: nextcord.Member, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("❌ Amount must be positive!", ephemeral=True)
+        return
+    
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("❌ You can't transfer to yourself!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < amount:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    settings = get_economy_settings()
+    tax = int(amount * (settings["tax_rate"] / 100))
+    final_amount = amount - tax
+    
+    update_economy(interaction.user.id, wallet=user_data["wallet"] - amount)
+    
+    target_data = get_user_economy(member.id)
+    update_economy(member.id, wallet=target_data["wallet"] + final_amount)
+    
+    embed = nextcord.Embed(
+        title="💸 Transfer Successful",
+        description=f"Transferred **${final_amount:,}** to {member.name} (Tax: **${tax:,}**)",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="shop", description="View the shop")
+async def shop(interaction: nextcord.Interaction):
+    # Shop items - can be customized
+    shop_items = [
+        {"name": "💎 Rare Boost", "price": 5000, "description": "A rare boost for your profile"},
+        {"name": "⭐ Star Role", "price": 10000, "description": "A star role on your profile"},
+        {"name": "🎖️ Premium Badge", "price": 25000, "description": "A premium badge"},
+    ]
+    
+    embed = nextcord.Embed(
+        title="🏪 Economy Shop",
+        color=BLUE
+    )
+    
+    for item in shop_items:
+        embed.add_field(name=item["name"], value=f"Price: **${item['price']:,}**\n{item['description']}", inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Economy Manage Command (Executive + Holding only)
+class EconomyManageView(nextcord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @nextcord.ui.select(placeholder="Select setting to modify", 
+                       options=[
+                           nextcord.SelectOption(label="Starting Balance", value="starting_balance"),
+                           nextcord.SelectOption(label="Daily Reward", value="daily_reward"),
+                           nextcord.SelectOption(label="Weekly Reward", value="weekly_reward"),
+                           nextcord.SelectOption(label="Monthly Reward", value="monthly_reward"),
+                           nextcord.SelectOption(label="Work Earnings (Min)", value="work_min"),
+                           nextcord.SelectOption(label="Work Earnings (Max)", value="work_max"),
+                           nextcord.SelectOption(label="Beg Earnings (Min)", value="beg_min"),
+                           nextcord.SelectOption(label="Beg Earnings (Max)", value="beg_max"),
+                           nextcord.SelectOption(label="Rob Amount (Min)", value="rob_min"),
+                           nextcord.SelectOption(label="Rob Amount (Max)", value="rob_max"),
+                           nextcord.SelectOption(label="Rob Cooldown (seconds)", value="rob_cooldown"),
+                           nextcord.SelectOption(label="Transfer Tax Rate (%)", value="tax_rate"),
+                       ])
+    async def select_callback(self, interaction, select):
+        await interaction.response.send_modal(EconomySettingModal(select.values[0]))
+
+class EconomySettingModal(nextcord.ui.Modal):
+    def __init__(self, setting_name):
+        super().__init__(f"Set {setting_name}")
+        self.setting_name = setting_name
+        
+        self.value = nextcord.ui.TextInput(
+            label="New Value",
+            style=nextcord.TextInputStyle.short,
+            required=True,
+            placeholder="Enter new value"
+        )
+        self.add_item(self.value)
+
+    async def callback(self, interaction: nextcord.Interaction):
+        try:
+            new_value = int(self.value.value)
+        except ValueError:
+            await interaction.response.send_message("❌ Please enter a valid number!", ephemeral=True)
+            return
+        
+        c.execute(f"UPDATE economy_settings SET {self.setting_name} = ? WHERE id = 1", (new_value,))
+        conn.commit()
+        
+        embed = nextcord.Embed(
+            title="✅ Setting Updated",
+            description=f"**{self.setting_name}** has been set to **{new_value}**",
+            color=BLUE
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.slash_command(name="economy-manage", description="Manage economy settings (Executive + Holding only)")
+async def economy_manage(interaction: nextcord.Interaction):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="⚙️ Economy Management",
+        description="Select a setting to modify:",
+        color=BLUE
+    )
+    
+    view = EconomyManageView()
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+# =========================================================
+# =================== AFK SYSTEM =========================
+# =========================================================
+
+AFK_FOOTER_IMAGE = "https://cdn.discordapp.com/attachments/1472412365415776306/1475277452103258362/footerisrp.png?ex=699ce6b1&is=699b9531&hm=d0b11e03fb99f8ea16956ebe9e5e2b1bb657b5ea315c1f8638149f984325ca3a&"
+
+def get_afk_status(user_id):
+    c.execute("SELECT * FROM afk WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    if result:
+        return {
+            "reason": result[1],
+            "start_time": result[2],
+            "pings": json.loads(result[3])
+        }
+    return None
+
+def set_afk(user_id, reason):
+    current_time = int(time.time())
+    c.execute("INSERT OR REPLACE INTO afk (user_id, reason, start_time, pings) VALUES (?, ?, ?, '[]')", (user_id, reason, current_time))
+    conn.commit()
+
+def remove_afk(user_id):
+    c.execute("DELETE FROM afk WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+def add_ping(user_id, pinger_id, message_content):
+    current = get_afk_status(user_id)
+    if current:
+        pings = current["pings"]
+        pings.append({"pinger_id": pinger_id, "message": message_content, "time": int(time.time())})
+        # Keep only last 50 pings
+        pings = pings[-50:]
+        c.execute("UPDATE afk SET pings = ? WHERE user_id = ?", (json.dumps(pings), user_id))
+        conn.commit()
+
+@bot.slash_command(name="afk", description="Set yourself as AFK")
+async def afk_slash(interaction: nextcord.Interaction, reason: str = "AFK"):
+    set_afk(interaction.user.id, reason)
+    
+    embed = nextcord.Embed(
+        title="💤 AFK Set",
+        description=f"You are now AFK: **{reason}**",
+        color=BLUE
+    )
+    embed.set_image(url=AFK_FOOTER_IMAGE)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.command(name="afk")
+async def afk_prefix(ctx, *, reason: str = "AFK"):
+    await log_command(ctx.author, "afk", "Prefix")
+    set_afk(ctx.author.id, reason)
+    
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+    
+    embed = nextcord.Embed(
+        title="💤 AFK Set",
+        description=f"You are now AFK: **{reason}**",
+        color=BLUE
+    )
+    embed.set_image(url=AFK_FOOTER_IMAGE)
+    
+    await ctx.send(embed=embed, delete_after=10)
+
+@bot.event
+async def on_message(message):
+    # Don't process bot messages
+    if message.author.bot:
+        return
+    
+    # Check if someone mentioned an AFK user
+    afk_status = get_afk_status(message.author.id)
+    
+    # If author is AFK, remove AFK and show pings
+    if afk_status:
+        remove_afk(message.author.id)
+        
+        pings = afk_status["pings"]
+        elapsed = int(time.time()) - afk_status["start_time"]
+        hours = elapsed // 3600
+        minutes = (elapsed % 3600) // 60
+        
+        # Show welcome back embed
+        embed = nextcord.Embed(
+            title="👋 Welcome Back!",
+            description=f"You were AFK for **{hours}h {minutes}m**",
+            color=BLUE
+        )
+        
+        if pings:
+            # Show up to 5 pings
+            recent_pings = pings[-5:]
+            ping_text = ""
+            for i, ping in enumerate(recent_pings, 1):
+                pinger = message.guild.get_member(ping["pinger_id"])
+                pinger_name = pinger.name if pinger else "Unknown"
+                ping_text += f"**{i}.** {pinger_name}: \"{ping['message']}\"\n"
+            
+            if len(pings) > 5:
+                ping_text += f"\n*...and {len(pings) - 5} more pings*"
+            
+            embed.add_field(name="📬 Pings While You Were Away", value=ping_text, inline=False)
+        
+        embed.set_image(url=AFK_FOOTER_IMAGE)
+        
+        await message.channel.send(embed=embed, delete_after=30)
+    
+    # Check for mentions of AFK users
+    for mention in message.mentions:
+        afk_data = get_afk_status(mention.id)
+        if afk_data:
+            # Add to pings
+            add_ping(mention.id, message.author.id, message.content)
+            
+            # Calculate elapsed time
+            elapsed = int(time.time()) - afk_data["start_time"]
+            hours = elapsed // 3600
+            minutes = (elapsed % 3600) // 60
+            
+            # Send AFK reply
+            embed = nextcord.Embed(
+                title="💤 User is AFK",
+                description=f"**{mention.name}** is currently AFK: **{afk_data['reason']}**\nAway for: **{hours}h {minutes}m**",
+                color=BLUE
+            )
+            embed.set_image(url=AFK_FOOTER_IMAGE)
+            
+            await message.reply(embed=embed, delete_after=20)
+    
+    # Process other commands
+    await bot.process_commands(message)
+
+# =========================================================
+# =============== WELCOME MEMBER COUNTER =================
+# =========================================================
+
+WELCOME_COUNTER_CHANNEL_ID = 1471639394212515916
+
+@bot.event
+async def on_member_join(member):
+    # Existing code continues...
+    # Just add the member counter message
+    
+    channel = bot.get_channel(WELCOME_COUNTER_CHANNEL_ID)
+    if channel:
+        member_count = len([m for m in member.guild.members if not m.bot])
+        
+        def ordinal(n):
+            if 10 <= n % 100 <= 20:
+                suffix = "th"
+            else:
+                suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+            return str(n) + suffix
+        
+        await channel.send(f"Welcome to Illinois State Roleplay, {member.mention}! You are our {ordinal(member_count)} member")
+
+# =========================================================
+# ============= SCHEDULED VERIFICATION MESSAGES ===========
+# =========================================================
+
+VERIFICATION_CHANNEL_ID = 1471660766536011952
+VERIFICATION_ROLE_ID = 1471661069825998919
+CHECKMARK_EMOJI_VERIFY = "<:Checkmark:1471668496814309449>"
+
+verification_message_id = None
+
+async def send_verification_message():
+    """Send the verification reminder message"""
+    global verification_message_id
+    
+    channel = bot.get_channel(VERIFICATION_CHANNEL_ID)
+    if not channel:
+        return
+    
+    # Delete previous message if exists
+    if verification_message_id:
+        try:
+            old_message = await channel.fetch_message(verification_message_id)
+            await old_message.delete()
+        except:
+            pass
+    
+    # Send new message
+    message = await channel.send(
+        f"> <@&{VERIFICATION_ROLE_ID}>: You are requested to {CHECKMARK_EMOJI_VERIFY} **Verify with Melonly** to ensure full community access, such as community interaction channels, giveaways/events, and more!"
+    )
+    
+    verification_message_id = message.id
+
+async def scheduled_verification():
+    """Background task to send verification messages at specified times"""
+    await bot.wait_until_ready()
+    
+    # Times: 12am, 6am, 12pm, 6pm CST (UTC: 6am, 12pm, 6pm, 12am)
+    # Actually: CST = UTC-6, so:
+    # 12am CST = 6am UTC
+    # 6am CST = 12pm UTC
+    # 12pm CST = 6pm UTC
+    # 6pm CST = 12am UTC
+    
+    target_times = [6, 12, 18, 0]  # UTC hours
+    
+    while not bot.is_closed():
+        current_hour = datetime.utcnow().hour
+        
+        if current_hour in target_times:
+            await send_verification_message()
+            # Wait until next hour to avoid multiple sends
+            await asyncio.sleep(3600)
+        
+        await asyncio.sleep(60)
+
+# =========================================================
+# ================= INVITE BLOCKING ======================
+# =========================================================
+
+# Allowed category IDs
+ALLOWED_CATEGORY_IDS = [
+    1471689868022120468,
+    1471689978135183581,
+    1473172223501144306,
+    1473449632842518569,
+    1473449548692062391,
+    1471690051078455386,
+]
+
+# Allowed roles (Executive + Holding)
+ALLOWED_ROLE_IDS_FOR_INVITE = [
+    1471642360503992411,
+    1471642126663024640,
+]
+
+INVITE_BLOCK_MESSAGE = "You are not permitted to send advertisements or links to Discord Communities in Illinois State Roleplay"
+
+# Combined on_message for both AFK and Invite Blocking
+@bot.event
+async def on_message(message):
+    # Skip bot messages
+    if message.author.bot:
+        return
+    
+    # Skip DMs
+    if isinstance(message.channel, nextcord.DMChannel):
+        return
+    
+    # ===== AFK SYSTEM =====
+    # Check if someone mentioned an AFK user
+    afk_status = get_afk_status(message.author.id)
+    
+    # If author is AFK, remove AFK and show pings
+    if afk_status:
+        remove_afk(message.author.id)
+        
+        pings = afk_status["pings"]
+        elapsed = int(time.time()) - afk_status["start_time"]
+        hours = elapsed // 3600
+        minutes = (elapsed % 3600) // 60
+        
+        # Show welcome back embed
+        embed = nextcord.Embed(
+            title="👋 Welcome Back!",
+            description=f"You were AFK for **{hours}h {minutes}m**",
+            color=BLUE
+        )
+        
+        if pings:
+            # Show up to 5 pings
+            recent_pings = pings[-5:]
+            ping_text = ""
+            for i, ping in enumerate(recent_pings, 1):
+                pinger = message.guild.get_member(ping["pinger_id"])
+                pinger_name = pinger.name if pinger else "Unknown"
+                ping_text += f"**{i}.** {pinger_name}: \"{ping['message']}\"\n"
+            
+            if len(pings) > 5:
+                ping_text += f"\n*...and {len(pings) - 5} more pings*"
+            
+            embed.add_field(name="📬 Pings While You Were Away", value=ping_text, inline=False)
+        
+        embed.set_image(url=AFK_FOOTER_IMAGE)
+        
+        await message.channel.send(embed=embed, delete_after=30)
+    
+    # Check for mentions of AFK users
+    for mention in message.mentions:
+        afk_data = get_afk_status(mention.id)
+        if afk_data:
+            # Add to pings
+            add_ping(mention.id, message.author.id, message.content)
+            
+            # Calculate elapsed time
+            elapsed = int(time.time()) - afk_data["start_time"]
+            hours = elapsed // 3600
+            minutes = (elapsed % 3600) // 60
+            
+            # Send AFK reply
+            embed = nextcord.Embed(
+                title="💤 User is AFK",
+                description=f"**{mention.name}** is currently AFK: **{afk_data['reason']}**\nAway for: **{hours}h {minutes}m**",
+                color=BLUE
+            )
+            embed.set_image(url=AFK_FOOTER_IMAGE)
+            
+            await message.reply(embed=embed, delete_after=20)
+    
+    # ===== INVITE BLOCKING =====
+    # Check if user has allowed role
+    if any(role.id in ALLOWED_ROLE_IDS_FOR_INVITE for role in message.author.roles):
+        await bot.process_commands(message)
+        return
+    
+    # Check if channel is in allowed category
+    if message.channel.category and message.channel.category.id in ALLOWED_CATEGORY_IDS:
+        await bot.process_commands(message)
+        return
+    
+    # Check for Discord invites
+    if "discord.gg/" in message.content.lower() or "discord.com/invite/" in message.content.lower():
+        # Check for specific allowed invite
+        if "discord.gg/prc" in message.content.lower():
+            await bot.process_commands(message)
+            return
+        
+        # Block the invite
+        try:
+            await message.delete()
+        except:
+            pass
+        
+        await message.channel.send(
+            f"{message.author.mention} {INVITE_BLOCK_MESSAGE}",
+            delete_after=10
+        )
+        return
+    
+    # Continue processing commands
+    await bot.process_commands(message)
+
+# =========================================================
+# ================= SUGGESTION SYSTEM ====================
+# =========================================================
+
+SUGGESTION_CHANNEL_ID = 1475326269380890755
+COMMUNITY_ROLE_ID = 1471652018329227415
+UPVOTE_EMOJI = "✅"
+DOWNVOTE_EMOJI = "<:XSignal:1475329163098591242>"
+
+# Approve/Deny roles (Management + Executive + Holding)
+APPROVE_DENY_ROLES = [
+    1471641915215843559,  # Management
+    1471642126663024640,  # Executive
+    1471642360503992411,  # Holding
+]
+
+class SuggestionView(nextcord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @nextcord.ui.button(label="Upvote", style=nextcord.ButtonStyle.success, emoji="✅", custom_id="suggestion_upvote")
+    async def upvote(self, button, interaction):
+        # Add upvote to database
+        c.execute("UPDATE suggestions SET upvotes = upvotes + 1 WHERE message_id = ?", (interaction.message.id,))
+        conn.commit()
+        
+        await interaction.response.send_message("✅ Voted!", ephemeral=True)
+    
+    @nextcord.ui.button(label="Downvote", style=nextcord.ButtonStyle.danger, emoji="X", custom_id="suggestion_downvote")
+    async def downvote(self, button, interaction):
+        # Add downvote to database
+        c.execute("UPDATE suggestions SET downvotes = downvotes + 1 WHERE message_id = ?", (interaction.message.id,))
+        conn.commit()
+        
+        await interaction.response.send_message("👎 Voted!", ephemeral=True)
+
+@bot.slash_command(name="suggest", description="Make a suggestion")
+async def suggest(interaction: nextcord.Interaction, suggestion: str):
+    channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
+    if not channel:
+        await interaction.response.send_message("❌ Suggestion channel not found!", ephemeral=True)
+        return
+    
+    # Create suggestion embed
+    embed = nextcord.Embed(
+        title="📝 New Suggestion",
+        description=suggestion,
+        color=BLUE,
+        timestamp=utcnow()
+    )
+    embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+    embed.add_field(name="Status", value="⏳ Pending", inline=True)
+    embed.add_field(name="Upvotes", value="0", inline=True)
+    embed.add_field(name="Downvotes", value="0", inline=True)
+    
+    # Send suggestion with view
+    view = SuggestionView()
+    message = await channel.send(embed=embed, view=view)
+    
+    # Add reactions
+    try:
+        await message.add_reaction(UPVOTE_EMOJI)
+        await message.add_reaction(DOWNVOTE_EMOJI)
+    except:
+        pass
+    
+    # Save to database
+    c.execute("INSERT INTO suggestions (message_id, channel_id, author_id, suggestion) VALUES (?, ?, ?, ?)",
+        (message.id, channel.id, interaction.user.id, suggestion))
+    conn.commit()
+    
+    await interaction.response.send_message("✅ Suggestion submitted!", ephemeral=True)
+
+@bot.slash_command(name="approve-suggestion", description="Approve a suggestion")
+async def approve_suggestion(interaction: nextcord.Interaction, message_id: int):
+    if not any(role.id in APPROVE_DENY_ROLES for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
+    try:
+        message = await channel.fetch_message(message_id)
+    except:
+        await interaction.response.send_message("❌ Message not found!", ephemeral=True)
+        return
+    
+    # Update database
+    c.execute("UPDATE suggestions SET status = 'approved', approver_id = ?, approved_at = ? WHERE message_id = ?",
+        (interaction.user.id, int(time.time()), message_id))
+    conn.commit()
+    
+    # Update embed
+    embed = message.embeds[0]
+    embed.color = 0x00FF00  # Green
+    embed.set_field_at(0, name="Status", value="✅ Approved", inline=True)
+    
+    await message.edit(embed=embed)
+    await interaction.response.send_message("✅ Suggestion approved!", ephemeral=True)
+
+@bot.slash_command(name="deny-suggestion", description="Deny a suggestion")
+async def deny_suggestion(interaction: nextcord.Interaction, message_id: int):
+    if not any(role.id in APPROVE_DENY_ROLES for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
+    try:
+        message = await channel.fetch_message(message_id)
+    except:
+        await interaction.response.send_message("❌ Message not found!", ephemeral=True)
+        return
+    
+    # Update database
+    c.execute("UPDATE suggestions SET status = 'denied', approver_id = ?, approved_at = ? WHERE message_id = ?",
+        (interaction.user.id, int(time.time()), message_id))
+    conn.commit()
+    
+    # Update embed
+    embed = message.embeds[0]
+    embed.color = 0xFF0000  # Red
+    embed.set_field_at(0, name="Status", value="❌ Denied", inline=True)
+    
+    await message.edit(embed=embed)
+    await interaction.response.send_message("❌ Suggestion denied!", ephemeral=True)
+
+# Update suggestion vote counts from reactions
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.user_id == bot.user.id:
+        return
+    
+    channel = bot.get_channel(payload.channel_id)
+    if not channel or channel.id != SUGGESTION_CHANNEL_ID:
+        return
+    
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except:
+        return
+    
+    # Check if it's a suggestion message
+    c.execute("SELECT * FROM suggestions WHERE message_id = ?", (payload.message_id,))
+    if not c.fetchone():
+        return
+    
+    emoji = str(payload.emoji)
+    if emoji == UPVOTE_EMOJI:
+        c.execute("UPDATE suggestions SET upvotes = upvotes + 1 WHERE message_id = ?", (payload.message_id,))
+    elif emoji == DOWNVOTE_EMOJI or emoji == "X":
+        c.execute("UPDATE suggestions SET downvotes = downvotes + 1 WHERE message_id = ?", (payload.message_id,))
+    
+    conn.commit()
+    
+    # Update embed with new counts
+    c.execute("SELECT upvotes, downvotes FROM suggestions WHERE message_id = ?", (payload.message_id,))
+    result = c.fetchone()
+    if result and message.embeds:
+        embed = message.embeds[0]
+        embed.set_field_at(1, name="Upvotes", value=str(result[0]), inline=True)
+        embed.set_field_at(2, name="Downvotes", value=str(result[1]), inline=True)
+        try:
+            await message.edit(embed=embed)
+        except:
+            pass
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    if payload.user_id == bot.user.id:
+        return
+    
+    channel = bot.get_channel(payload.channel_id)
+    if not channel or channel.id != SUGGESTION_CHANNEL_ID:
+        return
+    
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except:
+        return
+    
+    # Check if it's a suggestion message
+    c.execute("SELECT * FROM suggestions WHERE message_id = ?", (payload.message_id,))
+    if not c.fetchone():
+        return
+    
+    emoji = str(payload.emoji)
+    if emoji == UPVOTE_EMOJI:
+        c.execute("UPDATE suggestions SET upvotes = MAX(0, upvotes - 1) WHERE message_id = ?", (payload.message_id,))
+    elif emoji == DOWNVOTE_EMOJI or emoji == "X":
+        c.execute("UPDATE suggestions SET downvotes = MAX(0, downvotes - 1) WHERE message_id = ?", (payload.message_id,))
+    
+    conn.commit()
+    
+    # Update embed with new counts
+    c.execute("SELECT upvotes, downvotes FROM suggestions WHERE message_id = ?", (payload.message_id,))
+    result = c.fetchone()
+    if result and message.embeds:
+        embed = message.embeds[0]
+        embed.set_field_at(1, name="Upvotes", value=str(result[0]), inline=True)
+        embed.set_field_at(2, name="Downvotes", value=str(result[1]), inline=True)
+        try:
+            await message.edit(embed=embed)
+        except:
+            pass
+
+# =========================================================
+# ================== MODIFIED ON_READY ===================
+# =========================================================
+
+# We need to add the session DM task and verification task to on_ready
 
 # ------------------------------
 # Run bot
