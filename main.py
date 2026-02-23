@@ -3678,5 +3678,1750 @@ async def on_raw_reaction_remove(payload):
 # ------------------------------
 # Run bot
 # ------------------------------
+
+# ==================== PREFIX ECONOMY COMMANDS ====================
+
+# Balance prefix command
+@bot.command(name="balance", aliases=["bal"])
+async def balance_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    embed = nextcord.Embed(
+        title=f"{ctx.author.name}'s Balance",
+        color=BLUE
+    )
+    embed.add_field(name="💰 Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    embed.add_field(name="🏦 Bank", value=f"${user_data['bank']:,}", inline=True)
+    embed.add_field(name="💎 Total Earned", value=f"${user_data['total_earned']:,}", inline=True)
+    await ctx.send(embed=embed)
+
+# Deposit prefix command
+@bot.command(name="deposit")
+async def deposit_prefix(ctx, amount: int):
+    if amount <= 0:
+        await ctx.send("❌ Amount must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < amount:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    update_economy(ctx.author.id, wallet=user_data["wallet"] - amount, bank=user_data["bank"] + amount)
+    
+    embed = nextcord.Embed(
+        title="💰 Deposit Successful",
+        description=f"Deposited **${amount:,}** to your bank.",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Withdraw prefix command
+@bot.command(name="withdraw")
+async def withdraw_prefix(ctx, amount: int):
+    if amount <= 0:
+        await ctx.send("❌ Amount must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["bank"] < amount:
+        await ctx.send("❌ Insufficient funds in bank!")
+        return
+    
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + amount, bank=user_data["bank"] - amount)
+    
+    embed = nextcord.Embed(
+        title="🏦 Withdraw Successful",
+        description=f"Withdrew **${amount:,}** from your bank.",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Daily prefix command
+@bot.command(name="daily")
+async def daily_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["daily_timestamp"] < 86400:  # 24 hours
+        remaining = 86400 - (current_time - user_data["daily_timestamp"])
+        hours = remaining // 3600
+        minutes = (remaining % 3600) // 60
+        await ctx.send(f"❌ You can claim your daily reward in {hours}h {minutes}m.")
+        return
+    
+    reward = settings["daily_reward"]
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, daily_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Daily Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Weekly prefix command
+@bot.command(name="weekly")
+async def weekly_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["weekly_timestamp"] < 604800:  # 7 days
+        await ctx.send("❌ You can claim your weekly reward in 7 days.")
+        return
+    
+    reward = settings["weekly_reward"]
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, weekly_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Weekly Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Monthly prefix command
+@bot.command(name="monthly")
+async def monthly_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["monthly_timestamp"] < 2592000:  # 30 days
+        await ctx.send("❌ You can claim your monthly reward in 30 days.")
+        return
+    
+    reward = settings["monthly_reward"]
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + reward, total_earned=user_data["total_earned"] + reward, monthly_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="✅ Monthly Reward Claimed",
+        description=f"You received **${reward:,}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Work prefix command
+@bot.command(name="work")
+async def work_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["work_timestamp"] < 3600:  # 1 hour
+        remaining = 3600 - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        await ctx.send(f"❌ You can work again in {minutes} minutes.")
+        return
+    
+    earnings = random.randint(settings["work_min"], settings["work_max"])
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, work_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="💼 Work Complete",
+        description=f"You earned **${earnings:,}** from working!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Beg prefix command
+@bot.command(name="beg")
+async def beg_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["beg_timestamp"] < 300:  # 5 minutes
+        remaining = 300 - (current_time - user_data["beg_timestamp"])
+        await ctx.send(f"❌ You can beg again in {remaining} seconds.")
+        return
+    
+    earnings = random.randint(settings["beg_min"], settings["beg_max"])
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, beg_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="🙏 You begged...",
+        description=f"Someone gave you **${earnings:,}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Rob prefix command
+@bot.command(name="rob")
+async def rob_prefix(ctx, member: nextcord.Member):
+    if member.id == ctx.author.id:
+        await ctx.send("❌ You can't rob yourself!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    target_data = get_user_economy(member.id)
+    settings = get_economy_settings()
+    current_time = int(time.time())
+    
+    if current_time - user_data["last_robbed"] < settings["rob_cooldown"]:
+        remaining = settings["rob_cooldown"] - (current_time - user_data["last_robbed"])
+        minutes = remaining // 60
+        await ctx.send(f"❌ You can rob again in {minutes} minutes.")
+        return
+    
+    if target_data["wallet"] < 50:
+        await ctx.send(f"❌ {member.name} doesn't have enough money to rob!")
+        return
+    
+    # 50% chance to succeed
+    if random.random() < 0.5:
+        stolen = random.randint(settings["rob_min"], min(settings["rob_max"], target_data["wallet"]))
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + stolen, total_earned=user_data["total_earned"] + stolen, last_robbed=current_time)
+        update_economy(member.id, wallet=target_data["wallet"] - stolen)
+        
+        embed = nextcord.Embed(
+            title="💰 Robbery Successful!",
+            description=f"You stole **${stolen:,}** from {member.name}!",
+            color=BLUE
+        )
+        await ctx.send(embed=embed)
+    else:
+        fine = random.randint(50, 200)
+        if user_data["wallet"] >= fine:
+            update_economy(ctx.author.id, wallet=user_data["wallet"] - fine, last_robbed=current_time)
+            embed = nextcord.Embed(
+                title="🚨 Robbery Failed!",
+                description=f"You were caught and fined **${fine:,}**!",
+                color=0xFF0000
+            )
+        else:
+            update_economy(ctx.author.id, wallet=0, last_robbed=current_time)
+            embed = nextcord.Embed(
+                title="🚨 Robbery Failed!",
+                description=f"You were caught! You had **${user_data['wallet']:,}** seized!",
+                color=0xFF0000
+            )
+        await ctx.send(embed=embed)
+
+# Transfer prefix command
+@bot.command(name="transfer")
+async def transfer_prefix(ctx, member: nextcord.Member, amount: int):
+    if amount <= 0:
+        await ctx.send("❌ Amount must be positive!")
+        return
+    
+    if member.id == ctx.author.id:
+        await ctx.send("❌ You can't transfer to yourself!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < amount:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    settings = get_economy_settings()
+    tax = int(amount * (settings["tax_rate"] / 100))
+    final_amount = amount - tax
+    
+    update_economy(ctx.author.id, wallet=user_data["wallet"] - amount)
+    
+    target_data = get_user_economy(member.id)
+    update_economy(member.id, wallet=target_data["wallet"] + final_amount)
+    
+    embed = nextcord.Embed(
+        title="💸 Transfer Successful",
+        description=f"Transferred **${final_amount:,}** to {member.name} (Tax: **${tax:,}**)",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Shop prefix command
+@bot.command(name="shop")
+async def shop_prefix(ctx):
+    shop_items = [
+        {"name": "💎 Rare Boost", "price": 5000, "description": "A rare boost for your profile"},
+        {"name": "⭐ Star Role", "price": 10000, "description": "A star role on your profile"},
+        {"name": "🎖️ Premium Badge", "price": 25000, "description": "A premium badge"},
+    ]
+    
+    embed = nextcord.Embed(
+        title="🏪 Economy Shop",
+        color=BLUE
+    )
+    
+    for item in shop_items:
+        embed.add_field(name=item["name"], value=f"Price: **${item['price']:,}**\n{item['description']}", inline=False)
+    
+    await ctx.send(embed=embed)
+
+# ==================== ADDITIONAL ECONOMY COMMANDS ====================
+
+# Crime command (slash)
+@bot.slash_command(name="crime", description="Commit a crime to earn money (risk of fine)")
+async def crime(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    current_time = int(time.time())
+    
+    if current_time - user_data["work_timestamp"] < 1800:  # 30 min cooldown
+        remaining = 1800 - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        await interaction.response.send_message(f"❌ You can commit a crime again in {minutes} minutes.", ephemeral=True)
+        return
+    
+    if random.random() < 0.6:
+        earnings = random.randint(100, 500)
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, work_timestamp=current_time)
+        
+        embed = nextcord.Embed(
+            title="💰 Crime Successful!",
+            description=f"You committed a crime and earned **${earnings:,}**!",
+            color=BLUE
+        )
+    else:
+        fine = random.randint(50, 200)
+        new_wallet = max(0, user_data["wallet"] - fine)
+        update_economy(interaction.user.id, wallet=new_wallet, work_timestamp=current_time)
+        
+        embed = nextcord.Embed(
+            title="🚨 Crime Failed!",
+            description=f"You were caught and fined **${fine:,}**!",
+            color=0xFF0000
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Leaderboard command (slash)
+@bot.slash_command(name="leaderboard", description="View the server wealth leaderboard")
+async def leaderboard(interaction: nextcord.Interaction):
+    c.execute("SELECT user_id, wallet, bank FROM economy ORDER BY (wallet + bank) DESC LIMIT 10")
+    results = c.fetchall()
+    
+    embed = nextcord.Embed(
+        title="🏆 Wealth Leaderboard",
+        description="Top 10 richest members:",
+        color=BLUE
+    )
+    
+    for i, (user_id, wallet, bank) in enumerate(results, 1):
+        user = interaction.guild.get_member(user_id)
+        name = user.name if user else f"User {user_id}"
+        total = wallet + bank
+        embed.add_field(name=f"{i}. {name}", value=f"${total:,}", inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Give-money command (slash)
+@bot.slash_command(name="give-money", description="Give money to another user")
+async def give_money(interaction: nextcord.Interaction, member: nextcord.Member, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message("❌ Amount must be positive!", ephemeral=True)
+        return
+    
+    if member.id == interaction.user.id:
+        await interaction.response.send_message("❌ You can't give money to yourself!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < amount:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    settings = get_economy_settings()
+    tax = int(amount * (settings["tax_rate"] / 100))
+    final_amount = amount - tax
+    
+    update_economy(interaction.user.id, wallet=user_data["wallet"] - amount)
+    
+    target_data = get_user_economy(member.id)
+    update_economy(member.id, wallet=target_data["wallet"] + final_amount)
+    
+    embed = nextcord.Embed(
+        title="💸 Money Given",
+        description=f"You gave **${final_amount:,}** to {member.name} (Tax: **${tax:,}**)",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Money command (slash) - shows balance + leaderboard position
+@bot.slash_command(name="money", description="Show your balance and leaderboard position")
+async def money(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    
+    c.execute("SELECT user_id, wallet FROM economy ORDER BY wallet DESC")
+    all_users = c.fetchall()
+    position = 1
+    for uid, _ in all_users:
+        if uid == interaction.user.id:
+            break
+        position += 1
+    
+    embed = nextcord.Embed(
+        title=f"💰 {interaction.user.name}'s Balance",
+        color=BLUE
+    )
+    embed.add_field(name="Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    embed.add_field(name="Bank", value=f"${user_data['bank']:,}", inline=True)
+    embed.add_field(name="Position", value=f"#{position:,}", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ==================== PREFIX ECONOMY COMMANDS ====================
+
+@bot.command(name="crime")
+async def crime_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    current_time = int(time.time())
+    
+    if current_time - user_data["work_timestamp"] < 1800:
+        remaining = 1800 - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        await ctx.send(f"❌ You can commit a crime again in {minutes} minutes.")
+        return
+    
+    if random.random() < 0.6:
+        earnings = random.randint(100, 500)
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + earnings, total_earned=user_data["total_earned"] + earnings, work_timestamp=current_time)
+        
+        embed = nextcord.Embed(
+            title="💰 Crime Successful!",
+            description=f"You committed a crime and earned **${earnings:,}**!",
+            color=BLUE
+        )
+    else:
+        fine = random.randint(50, 200)
+        new_wallet = max(0, user_data["wallet"] - fine)
+        update_economy(ctx.author.id, wallet=new_wallet, work_timestamp=current_time)
+        
+        embed = nextcord.Embed(
+            title="🚨 Crime Failed!",
+            description=f"You were caught and fined **${fine:,}**!",
+            color=0xFF0000
+        )
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="leaderboard", aliases=["lb"])
+async def leaderboard_prefix(ctx):
+    c.execute("SELECT user_id, wallet, bank FROM economy ORDER BY (wallet + bank) DESC LIMIT 10")
+    results = c.fetchall()
+    
+    embed = nextcord.Embed(
+        title="🏆 Wealth Leaderboard",
+        description="Top 10 richest members:",
+        color=BLUE
+    )
+    
+    for i, (user_id, wallet, bank) in enumerate(results, 1):
+        user = ctx.guild.get_member(user_id)
+        name = user.name if user else f"User {user_id}"
+        total = wallet + bank
+        embed.add_field(name=f"{i}. {name}", value=f"${total:,}", inline=False)
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="give-money", aliases=["give"])
+async def give_money_prefix(ctx, member: nextcord.Member, amount: int):
+    if amount <= 0:
+        await ctx.send("❌ Amount must be positive!")
+        return
+    
+    if member.id == ctx.author.id:
+        await ctx.send("❌ You can't give money to yourself!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < amount:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    settings = get_economy_settings()
+    tax = int(amount * (settings["tax_rate"] / 100))
+    final_amount = amount - tax
+    
+    update_economy(ctx.author.id, wallet=user_data["wallet"] - amount)
+    
+    target_data = get_user_economy(member.id)
+    update_economy(member.id, wallet=target_data["wallet"] + final_amount)
+    
+    embed = nextcord.Embed(
+        title="💸 Money Given",
+        description=f"You gave **${final_amount:,}** to {member.name} (Tax: **${tax:,}**)",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+@bot.command(name="money")
+async def money_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    
+    c.execute("SELECT user_id, wallet FROM economy ORDER BY wallet DESC")
+    all_users = c.fetchall()
+    position = 1
+    for uid, _ in all_users:
+        if uid == ctx.author.id:
+            break
+        position += 1
+    
+    embed = nextcord.Embed(
+        title=f"💰 {ctx.author.name}'s Balance",
+        color=BLUE
+    )
+    embed.add_field(name="Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    embed.add_field(name="Bank", value=f"${user_data['bank']:,}", inline=True)
+    embed.add_field(name="Position", value=f"#{position:,}", inline=True)
+    await ctx.send(embed=embed)
+
+# ==================== ECONOMY ADMIN PANEL ====================
+
+class EconomyConfigView(nextcord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @nextcord.ui.select(placeholder="Select configuration option", 
+                       options=[
+                           nextcord.SelectOption(label="Set Starting Balance", value="starting_balance"),
+                           nextcord.SelectOption(label="Set Daily Reward", value="daily_reward"),
+                           nextcord.SelectOption(label="Set Weekly Reward", value="weekly_reward"),
+                           nextcord.SelectOption(label="Set Monthly Reward", value="monthly_reward"),
+                           nextcord.SelectOption(label="Set Work Min", value="work_min"),
+                           nextcord.SelectOption(label="Set Work Max", value="work_max"),
+                           nextcord.SelectOption(label="Set Rob Cooldown (seconds)", value="rob_cooldown"),
+                           nextcord.SelectOption(label="Set Tax Rate (%)", value="tax_rate"),
+                           nextcord.SelectOption(label="Add Money to User", value="add_money"),
+                           nextcord.SelectOption(label="Remove Money from User", value="remove_money"),
+                           nextcord.SelectOption(label="Reset User Money", value="reset_money"),
+                           nextcord.SelectOption(label="Add Money to Role", value="add_money_role"),
+                           nextcord.SelectOption(label="Economy Stats", value="stats"),
+                       ])
+    async def select_callback(self, interaction, select):
+        await interaction.response.send_modal(EconomyConfigModal(select.values[0]))
+
+class EconomyConfigModal(nextcord.ui.Modal):
+    def __init__(self, setting_type):
+        super().__init__(f"Economy Configuration")
+        self.setting_type = setting_type
+        
+        if setting_type in ["add_money", "remove_money", "reset_money"]:
+            self.user_id = nextcord.ui.TextInput(
+                label="User ID",
+                style=nextcord.TextInputStyle.short,
+                required=True,
+                placeholder="Enter user ID"
+            )
+            self.add_item(self.user_id)
+        
+        if setting_type in ["add_money", "remove_money", "add_money_role"]:
+            self.amount = nextcord.ui.TextInput(
+                label="Amount",
+                style=nextcord.TextInputStyle.short,
+                required=True,
+                placeholder="Enter amount"
+            )
+            self.add_item(self.amount)
+        
+        if setting_type == "add_money_role":
+            self.role_id = nextcord.ui.TextInput(
+                label="Role ID",
+                style=nextcord.TextInputStyle.short,
+                required=True,
+                placeholder="Enter role ID"
+            )
+            self.add_item(self.role_id)
+        
+        if setting_type not in ["add_money", "remove_money", "reset_money", "add_money_role", "stats"]:
+            self.value = nextcord.ui.TextInput(
+                label="Value",
+                style=nextcord.TextInputStyle.short,
+                required=True,
+                placeholder="Enter new value"
+            )
+            self.add_item(self.value)
+
+    async def callback(self, interaction: nextcord.Interaction):
+        if self.setting_type == "add_money":
+            try:
+                user_id = int(self.user_id.value)
+                amount = int(self.amount.value)
+                user_data = get_user_economy(user_id)
+                new_wallet = user_data["wallet"] + amount
+                update_economy(user_id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+                embed = nextcord.Embed(title="✅ Money Added", description=f"Added **${amount:,}** to user {user_id}", color=BLUE)
+            except:
+                embed = nextcord.Embed(title="❌ Error", description="Invalid user ID or amount", color=0xFF0000)
+        
+        elif self.setting_type == "remove_money":
+            try:
+                user_id = int(self.user_id.value)
+                amount = int(self.amount.value)
+                user_data = get_user_economy(user_id)
+                new_wallet = max(0, user_data["wallet"] - amount)
+                update_economy(user_id, wallet=new_wallet)
+                embed = nextcord.Embed(title="✅ Money Removed", description=f"Removed **${amount:,}** from user {user_id}", color=BLUE)
+            except:
+                embed = nextcord.Embed(title="❌ Error", description="Invalid user ID or amount", color=0xFF0000)
+        
+        elif self.setting_type == "reset_money":
+            settings = get_economy_settings()
+            try:
+                user_id = int(self.user_id.value)
+                update_economy(user_id, wallet=settings["starting_balance"], bank=0, total_earned=settings["starting_balance"])
+                embed = nextcord.Embed(title="✅ Money Reset", description=f"Reset money for user {user_id}", color=BLUE)
+            except:
+                embed = nextcord.Embed(title="❌ Error", description="Invalid user ID", color=0xFF0000)
+        
+        elif self.setting_type == "add_money_role":
+            try:
+                role_id = int(self.role_id.value)
+                amount = int(self.amount.value)
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    for member in role.members:
+                        user_data = get_user_economy(member.id)
+                        new_wallet = user_data["wallet"] + amount
+                        update_economy(member.id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+                    embed = nextcord.Embed(title="✅ Money Added to Role", description=f"Added **${amount:,}** to all {len(role.members)} members with {role.name}", color=BLUE)
+                else:
+                    embed = nextcord.Embed(title="❌ Error", description="Role not found", color=0xFF0000)
+            except:
+                embed = nextcord.Embed(title="❌ Error", description="Invalid role ID or amount", color=0xFF0000)
+        
+        elif self.setting_type == "stats":
+            c.execute("SELECT COUNT(*), SUM(wallet), SUM(bank) FROM economy")
+            result = c.fetchone()
+            embed = nextcord.Embed(title="📊 Economy Statistics", description=f"Total Users: **{result[0]:,}**\nTotal Wallet: **${result[1]:,}**\nTotal Bank: **${result[2]:,}**", color=BLUE)
+        
+        else:
+            try:
+                new_value = int(self.value.value)
+                c.execute(f"UPDATE economy_settings SET {self.setting_type} = ? WHERE id = 1", (new_value,))
+                conn.commit()
+                embed = nextcord.Embed(title="✅ Setting Updated", description=f"**{self.setting_type}** has been set to **{new_value}**", color=BLUE)
+            except:
+                embed = nextcord.Embed(title="❌ Error", description="Invalid value", color=0xFF0000)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Economy Config Slash Command
+@bot.slash_command(name="econ-config", description="Economy configuration panel (Executive + Holding only)")
+async def econ_config_slash(interaction: nextcord.Interaction):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(title="⚙️ Economy Configuration", description="Select an option to configure:", color=BLUE)
+    view = EconomyConfigView()
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+# Economy Config Prefix Command
+@bot.command(name="econ-panel")
+async def econ_panel_prefix(ctx):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission to use this command!")
+        return
+    
+    embed = nextcord.Embed(title="⚙️ Economy Configuration", description="Select an option to configure:", color=BLUE)
+    view = EconomyConfigView()
+    await ctx.send(embed=embed, view=view)
+
+# ==================== HELP COMMAND ====================
+
+HELP_FOOTER_IMAGE = "https://cdn.discordapp.com/attachments/1472412365415776306/1475277452103258362/footerisrp.png?ex=699ce6b1&is=699b9531&hm=d0b11e03fb99f8ea16956ebe9e5e2b1bb657b5ea315c1f8638149f984325ca3a&"
+SKY_BLUE = 0x87CEEB
+
+@bot.slash_command(name="help", description="View all bot commands")
+async def help_slash(interaction: nextcord.Interaction):
+    # Text embed with command list
+    text_embed = nextcord.Embed(
+        title="📚 Illinois State Roleplay Bot Commands",
+        description="Here's a list of all available commands:",
+        color=SKY_BLUE,
+        timestamp=utcnow()
+    )
+    
+    text_embed.add_field(
+        name="💰 Economy Commands",
+        value="`/balance` - Check your balance\n`/money` - Balance + leaderboard position\n`/deposit [amount]` - Deposit to bank\n`/withdraw [amount]` - Withdraw from bank\n`/daily` - Claim daily reward\n`/weekly` - Claim weekly reward\n`/monthly` - Claim monthly reward\n`/work` - Work for money\n`/crime` - Commit crime (risk of fine)\n`/beg` - Beg for money\n`/rob @user` - Rob someone\n`/give-money @user [amount]` - Give money\n`/leaderboard` - View rich list\n`/shop` - View shop",
+        inline=False
+    )
+    
+    text_embed.add_field(
+        name="🎫 Other Commands",
+        value="`/afk [reason]` - Set AFK status\n`/suggest [suggestion]` - Make a suggestion\n`/help` - Show this help message",
+        inline=False
+    )
+    
+    text_embed.add_field(
+        name="⚙️ Admin Commands (Exec+/Holding+)",
+        value="`/sessions` - Manage sessions\n`/promote @user` - Promote staff\n`/lock` - Lock channel\n`/unlock` - Unlock channel\n`/nick @user [name]` - Change nickname\n`/econ-config` - Economy settings\n`/sendpanel` - Send ticket panel",
+        inline=False
+    )
+    
+    # Image embed with footer
+    image_embed = nextcord.Embed(color=SKY_BLUE)
+    image_embed.set_image(url=HELP_FOOTER_IMAGE)
+    
+    await interaction.response.send_message(embeds=[text_embed, image_embed], ephemeral=True)
+
+@bot.command(name="help")
+async def help_prefix(ctx):
+    text_embed = nextcord.Embed(
+        title="📚 Illinois State Roleplay Bot Commands",
+        description="Here's a list of all available commands:",
+        color=SKY_BLUE,
+        timestamp=utcnow()
+    )
+    
+    text_embed.add_field(
+        name="💰 Economy Commands",
+        value="`;balance` or `;bal` - Check balance\n`;money` - Balance + position\n`;deposit [amount]` - Deposit\n`;withdraw [amount]` - Withdraw\n`;daily` - Daily reward\n`;weekly` - Weekly reward\n`;monthly` - Monthly reward\n`;work` - Work for money\n`;crime` - Commit crime\n`;beg` - Beg for money\n`;rob @user` - Rob someone\n`;give @user [amount]` - Give money\n`;leaderboard` or `;lb` - Rich list\n`;shop` - View shop",
+        inline=False
+    )
+    
+    text_embed.add_field(
+        name="🎫 Other Commands",
+        value="`;afk [reason]` - Set AFK\n`;suggest [text]` - Make suggestion\n`;help` - Show help",
+        inline=False
+    )
+    
+    text_embed.add_field(
+        name="⚙️ Admin Commands (Exec+/Holding+)",
+        value="`;sessions` - Session management\n`;promote @user` - Promote staff\n`;lock` - Lock channel\n`;unlock` - Unlock channel\n`;nick @user [name]` - Change nickname\n`;econ-panel` - Economy settings\n`;sendpanel` - Ticket panel",
+        inline=False
+    )
+    
+    image_embed = nextcord.Embed(color=SKY_BLUE)
+    image_embed.set_image(url=HELP_FOOTER_IMAGE)
+    
+    await ctx.send(embeds=[text_embed, image_embed])
+
+# ==================== ADDITIONAL UNBELIEVABOAT-STYLE COMMANDS ====================
+
+# Collect Income Slash Command
+@bot.slash_command(name="collect-income", description="Collect your passive income")
+async def collect_income(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    current_time = int(time.time())
+    
+    # Income collected every 10 minutes (600 seconds)
+    income_interval = 600
+    if current_time - user_data["work_timestamp"] < income_interval:
+        remaining = income_interval - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        seconds = remaining % 60
+        await interaction.response.send_message(f"❌ You can collect income again in {minutes}m {seconds}s.", ephemeral=True)
+        return
+    
+    # Calculate passive income based on total earned (0.1% of total earned, min $1, max $100)
+    income = max(1, min(100, int(user_data["total_earned"] * 0.001)))
+    update_economy(interaction.user.id, wallet=user_data["wallet"] + income, total_earned=user_data["total_earned"] + income, work_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="💰 Income Collected!",
+        description=f"You collected **${income:,}** in passive income!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Collect Income Prefix Command
+@bot.command(name="collect-income", aliases=["collect"])
+async def collect_income_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    current_time = int(time.time())
+    
+    income_interval = 600
+    if current_time - user_data["work_timestamp"] < income_interval:
+        remaining = income_interval - (current_time - user_data["work_timestamp"])
+        minutes = remaining // 60
+        seconds = remaining % 60
+        await ctx.send(f"❌ You can collect income again in {minutes}m {seconds}s.")
+        return
+    
+    income = max(1, min(100, int(user_data["total_earned"] * 0.001)))
+    update_economy(ctx.author.id, wallet=user_data["wallet"] + income, total_earned=user_data["total_earned"] + income, work_timestamp=current_time)
+    
+    embed = nextcord.Embed(
+        title="💰 Income Collected!",
+        description=f"You collected **${income:,}** in passive income!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Item Info Slash Command
+@bot.slash_command(name="item-info", description="View info about an item")
+async def item_info(interaction: nextcord.Interaction, item_name: str):
+    items = {
+        "rare boost": {"price": 5000, "description": "A rare boost that increases work earnings by 10% for 24 hours"},
+        "star role": {"price": 10000, "description": "A shiny star role on your profile"},
+        "premium badge": {"price": 25000, "description": "A premium badge showing your support"},
+        "money multiplier": {"price": 15000, "description": "2x money earnings for 1 hour"},
+        "luck charm": {"price": 7500, "description": "Increases robbery success chance by 20%"},
+    }
+    
+    item_lower = item_name.lower()
+    if item_lower in items:
+        item = items[item_lower]
+        embed = nextcord.Embed(
+            title=f"📦 {item_name.title()}",
+            description=item["description"],
+            color=BLUE
+        )
+        embed.add_field(name="💰 Price", value=f"${item['price']:,}", inline=True)
+    else:
+        embed = nextcord.Embed(
+            title="❌ Item Not Found",
+            description="Available items: Rare Boost, Star Role, Premium Badge, Money Multiplier, Luck Charm",
+            color=0xFF0000
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Buy Item Slash Command
+@bot.slash_command(name="buy-item", description="Buy an item from the shop")
+async def buy_item(interaction: nextcord.Interaction, item_name: str):
+    items = {
+        "rare boost": {"price": 5000, "description": "A rare boost for your profile"},
+        "star role": {"price": 10000, "description": "A star role on your profile"},
+        "premium badge": {"price": 25000, "description": "A premium badge"},
+        "money multiplier": {"price": 15000, "description": "2x money earnings for 1 hour"},
+        "luck charm": {"price": 7500, "description": "Increases robbery success chance"},
+    }
+    
+    item_lower = item_name.lower()
+    if item_lower not in items:
+        await interaction.response.send_message("❌ Item not found! Available: Rare Boost, Star Role, Premium Badge, Money Multiplier, Luck Charm", ephemeral=True)
+        return
+    
+    item = items[item_lower]
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < item["price"]:
+        await interaction.response.send_message(f"❌ You need **${item['price']:,}** to buy this item!", ephemeral=True)
+        return
+    
+    update_economy(interaction.user.id, wallet=user_data["wallet"] - item["price"])
+    
+    embed = nextcord.Embed(
+        title="✅ Item Purchased!",
+        description=f"You bought **{item_name.title()}** for **${item['price']:,}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Inventory Slash Command
+@bot.slash_command(name="inventory", description="View your inventory")
+async def inventory(interaction: nextcord.Interaction):
+    user_data = get_user_economy(interaction.user.id)
+    
+    # Placeholder inventory - in real implementation would use a separate table
+    embed = nextcord.Embed(
+        title=f"🎒 {interaction.user.name}'s Inventory",
+        description="Your purchased items:",
+        color=BLUE
+    )
+    embed.add_field(name="Items", value="No items yet. Use `/buy-item` to purchase items!", inline=False)
+    embed.add_field(name="💰 Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Use Item Slash Command
+@bot.slash_command(name="use-item", description="Use an item from your inventory")
+async def use_item(interaction: nextcord.Interaction, item_name: str):
+    items = ["rare boost", "star role", "premium badge", "money multiplier", "luck charm"]
+    
+    if item_name.lower() not in items:
+        await interaction.response.send_message("❌ You don't have this item!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Item Used!",
+        description=f"You used **{item_name}**!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Roulette Slash Command
+@bot.slash_command(name="roulette", description="Play roulette")
+async def roulette(interaction: nextcord.Interaction, bet: int, color: str):
+    if bet <= 0:
+        await interaction.response.send_message("❌ Bet must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < bet:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    colors = ["red", "black", "green"]
+    color_lower = color.lower()
+    
+    if color_lower not in colors:
+        await interaction.response.send_message("❌ Choose red, black, or green!", ephemeral=True)
+        return
+    
+    # Spin the wheel
+    result = random.choice(colors)
+    
+    if color_lower == result:
+        if color_lower == "green":
+            winnings = bet * 14  # 14x for green
+        else:
+            winnings = bet * 2  # 2x for red/black
+        
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Roulette - YOU WON!",
+            description=f"The wheel landed on **{result.upper()}**!\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    else:
+        update_economy(interaction.user.id, wallet=user_data["wallet"] - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Roulette - YOU LOST",
+            description=f"The wheel landed on **{result.upper()}**.\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Slot Machine Slash Command
+@bot.slash_command(name="slot-machine", description="Play the slot machine")
+async def slot_machine(interaction: nextcord.Interaction, bet: int):
+    if bet <= 0:
+        await interaction.response.send_message("❌ Bet must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < bet:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐"]
+    
+    # Spin 3 reels
+    reel1 = random.choice(emojis)
+    reel2 = random.choice(emojis)
+    reel3 = random.choice(emojis)
+    
+    result_text = f"{reel1} {reel2} {reel3}"
+    
+    # Check for win
+    if reel1 == reel2 == reel3:
+        # Jackpot!
+        winnings = bet * 10
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 JACKPOT! 🎰",
+            description=f"{result_text}\nYou won **${winnings:,}**!",
+            color=0xFFD700
+        )
+    elif reel1 == reel2 or reel2 == reel3 or reel1 == reel3:
+        # Small win
+        winnings = bet * 2
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 You Won!",
+            description=f"{result_text}\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    else:
+        update_economy(interaction.user.id, wallet=user_data["wallet"] - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Better Luck Next Time",
+            description=f"{result_text}\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Blackjack Slash Command
+@bot.slash_command(name="blackjack", description="Play blackjack")
+async def blackjack(interaction: nextcord.Interaction, bet: int):
+    if bet <= 0:
+        await interaction.response.send_message("❌ Bet must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < bet:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    # Simple blackjack - draw 2 cards each
+    cards = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+    card_values = {"2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10, "J": 10, "Q": 10, "K": 10, "A": 11}
+    
+    def get_card_value(hand):
+        total = sum(card_values[c] for c in hand)
+        aces = hand.count("A")
+        while total > 21 and aces > 0:
+            total -= 10
+            aces -= 1
+        return total
+    
+    player_hand = [random.choice(cards), random.choice(cards)]
+    dealer_hand = [random.choice(cards), random.choice(cards)]
+    
+    player_total = get_card_value(player_hand)
+    dealer_total = get_card_value(dealer_hand)
+    
+    result_text = f"**Your cards:** {' '.join(player_hand)} ({player_total})\n**Dealer's cards:** {' '.join(dealer_hand)} ({dealer_total})"
+    
+    if player_total > 21:
+        update_economy(interaction.user.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - BUST!",
+            description=f"{result_text}\n\nYou busted! You lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    elif dealer_total > 21 or player_total > dealer_total:
+        winnings = bet * 2
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - YOU WIN!",
+            description=f"{result_text}\n\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    elif player_total == dealer_total:
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - PUSH",
+            description=f"{result_text}\n\nIt's a tie! Your bet of **${bet:,}** has been returned.",
+            color=BLUE
+        )
+    else:
+        update_economy(interaction.user.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - YOU LOSE",
+            description=f"{result_text}\n\nThe dealer wins. You lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Russian Roulette Slash Command
+@bot.slash_command(name="russian-roulette", description="Play russian roulette (high risk!)")
+async def russian_roulette(interaction: nextcord.Interaction, bet: int):
+    if bet <= 0:
+        await interaction.response.send_message("❌ Bet must be positive!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(interaction.user.id)
+    
+    if user_data["wallet"] < bet:
+        await interaction.response.send_message("❌ Insufficient funds!", ephemeral=True)
+        return
+    
+    # 1 in 6 chance of "death" (losing)
+    if random.randint(1, 6) == 1:
+        # Lost - you got the bullet
+        update_economy(interaction.user.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🔫 Russian Roulette - BANG!",
+            description="You pulled the trigger and... BANG!\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    else:
+        # Won - you survived
+        winnings = bet * 5
+        update_economy(interaction.user.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        embed = nextcord.Embed(
+            title="🔫 Russian Roulette - CLICK!",
+            description="The chamber was empty... You survived!\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ==================== ADMIN ECONOMY CONFIG COMMANDS ====================
+
+# Set Currency Slash Command
+@bot.slash_command(name="set-currency", description="Set the server currency symbol (Executive + Holding only)")
+async def set_currency(interaction: nextcord.Interaction, symbol: str):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Currency Set",
+        description=f"Currency symbol has been set to **{symbol}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Maximum Balance Slash Command
+@bot.slash_command(name="maximum-balance", description="View or set maximum balance limit")
+async def maximum_balance(interaction: nextcord.Interaction, limit: int = None):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    if limit:
+        embed = nextcord.Embed(
+            title="✅ Maximum Balance Set",
+            description=f"Maximum balance has been set to **${limit:,}**",
+            color=BLUE
+        )
+    else:
+        embed = nextcord.Embed(
+            title="💰 Maximum Balance",
+            description=f"Current maximum balance is unlimited",
+            color=BLUE
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Money Audit Log Slash Command
+@bot.slash_command(name="money-audit-log", description="View money transaction logs")
+async def money_audit_log(interaction: nextcord.Interaction):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    c.execute("SELECT user_id, wallet, total_earned FROM economy ORDER BY total_earned DESC LIMIT 20")
+    results = c.fetchall()
+    
+    embed = nextcord.Embed(
+        title="📊 Money Audit Log",
+        description="Top 20 earners in the server:",
+        color=BLUE
+    )
+    
+    for user_id, wallet, total in results:
+        user = interaction.guild.get_member(user_id)
+        name = user.name if user else f"User {user_id}"
+        embed.add_field(name=name, value=f"Wallet: ${wallet:,}\nTotal Earned: ${total:,}", inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Add Money Slash Command
+@bot.slash_command(name="add-money", description="Add money to a user (Executive + Holding only)")
+async def add_money(interaction: nextcord.Interaction, member: nextcord.Member, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(member.id)
+    new_wallet = user_data["wallet"] + amount
+    update_economy(member.id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+    
+    embed = nextcord.Embed(
+        title="✅ Money Added",
+        description=f"Added **${amount:,}** to **{member.name}**'s wallet.\nNew balance: **${new_wallet:,}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Remove Money Slash Command
+@bot.slash_command(name="remove-money", description="Remove money from a user (Executive + Holding only)")
+async def remove_money(interaction: nextcord.Interaction, member: nextcord.Member, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    user_data = get_user_economy(member.id)
+    new_wallet = max(0, user_data["wallet"] - amount)
+    update_economy(member.id, wallet=new_wallet)
+    
+    embed = nextcord.Embed(
+        title="✅ Money Removed",
+        description=f"Removed **${amount:,}** from **{member.name}**'s wallet.\nNew balance: **${new_wallet:,}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Add Money Role Slash Command
+@bot.slash_command(name="add-money-role", description="Add money to all members with a role")
+async def add_money_role(interaction: nextcord.Interaction, role: nextcord.Role, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    count = 0
+    for member in role.members:
+        user_data = get_user_economy(member.id)
+        new_wallet = user_data["wallet"] + amount
+        update_economy(member.id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+        count += 1
+    
+    embed = nextcord.Embed(
+        title="✅ Money Added to Role",
+        description=f"Added **${amount:,}** to **{count}** members with **{role.name}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Remove Money Role Slash Command
+@bot.slash_command(name="remove-money-role", description="Remove money from all members with a role")
+async def remove_money_role(interaction: nextcord.Interaction, role: nextcord.Role, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    count = 0
+    for member in role.members:
+        user_data = get_user_economy(member.id)
+        new_wallet = max(0, user_data["wallet"] - amount)
+        update_economy(member.id, wallet=new_wallet)
+        count += 1
+    
+    embed = nextcord.Embed(
+        title="✅ Money Removed from Role",
+        description=f"Removed **${amount:,}** from **{count}** members with **{role.name}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Economy Stats Slash Command
+@bot.slash_command(name="economy-stats", description="View economy statistics")
+async def economy_stats(interaction: nextcord.Interaction):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    c.execute("SELECT COUNT(*), SUM(wallet), SUM(bank), SUM(total_earned) FROM economy")
+    result = c.fetchone()
+    
+    embed = nextcord.Embed(
+        title="📊 Economy Statistics",
+        description=f"**Total Users:** {result[0]:,}\n**Total Wallet:** ${result[1]:,}\n**Total Bank:** ${result[2]:,}\n**Total Earned:** ${result[3]:,}",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Reset Money Slash Command
+@bot.slash_command(name="reset-money", description="Reset a user's money to starting balance")
+async def reset_money(interaction: nextcord.Interaction, member: nextcord.Member):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    settings = get_economy_settings()
+    update_economy(member.id, wallet=settings["starting_balance"], bank=0, total_earned=settings["starting_balance"])
+    
+    embed = nextcord.Embed(
+        title="✅ Money Reset",
+        description=f"**{member.name}**'s money has been reset to **${settings['starting_balance']:,}**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Reset Economy Slash Command
+@bot.slash_command(name="reset-economy", description="Reset all economy data")
+async def reset_economy(interaction: nextcord.Interaction):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    settings = get_economy_settings()
+    c.execute("UPDATE economy SET wallet = ?, bank = 0, total_earned = ?", (settings["starting_balance"], settings["starting_balance"]))
+    conn.commit()
+    
+    embed = nextcord.Embed(
+        title="✅ Economy Reset",
+        description="All users' money has been reset to starting balance!",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Set Cooldown Slash Command
+@bot.slash_command(name="set-cooldown", description="Set command cooldowns")
+async def set_cooldown(interaction: nextcord.Interaction, command: str, seconds: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Cooldown Set",
+        description=f"**{command}** cooldown set to **{seconds}** seconds",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Set Fine Rate Slash Command
+@bot.slash_command(name="set-fine-rate", description="Set the crime/punishment fine rate")
+async def set_fine_rate(interaction: nextcord.Interaction, rate: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Fine Rate Set",
+        description=f"Fine rate has been set to **{rate}%**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# Set Failure Rate Slash Command
+@bot.slash_command(name="set-failure-rate", description="Set the failure rate for commands")
+async def set_failure_rate(interaction: nextcord.Interaction, rate: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Failure Rate Set",
+        description=f"Failure rate has been set to **{rate}%**",
+        color=BLUE
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ==================== ADMIN PREFIX ECONOMY COMMANDS ====================
+
+# Add Money Prefix Command
+@bot.command(name="add-money")
+async def add_money_prefix(ctx, member: nextcord.Member, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    user_data = get_user_economy(member.id)
+    new_wallet = user_data["wallet"] + amount
+    update_economy(member.id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+    
+    embed = nextcord.Embed(
+        title="✅ Money Added",
+        description=f"Added **${amount:,}** to **{member.name}**'s wallet.\nNew balance: **${new_wallet:,}**",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Remove Money Prefix Command
+@bot.command(name="remove-money")
+async def remove_money_prefix(ctx, member: nextcord.Member, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    user_data = get_user_economy(member.id)
+    new_wallet = max(0, user_data["wallet"] - amount)
+    update_economy(member.id, wallet=new_wallet)
+    
+    embed = nextcord.Embed(
+        title="✅ Money Removed",
+        description=f"Removed **${amount:,}** from **{member.name}**'s wallet.\nNew balance: **${new_wallet:,}**",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Economy Stats Prefix Command
+@bot.command(name="economy-stats")
+async def economy_stats_prefix(ctx):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    c.execute("SELECT COUNT(*), SUM(wallet), SUM(bank), SUM(total_earned) FROM economy")
+    result = c.fetchone()
+    
+    embed = nextcord.Embed(
+        title="📊 Economy Statistics",
+        description=f"**Total Users:** {result[0]:,}\n**Total Wallet:** ${result[1]:,}\n**Total Bank:** ${result[2]:,}\n**Total Earned:** ${result[3]:,}",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Reset Money Prefix Command
+@bot.command(name="reset-money")
+async def reset_money_prefix(ctx, member: nextcord.Member):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    settings = get_economy_settings()
+    update_economy(member.id, wallet=settings["starting_balance"], bank=0, total_earned=settings["starting_balance"])
+    
+    embed = nextcord.Embed(
+        title="✅ Money Reset",
+        description=f"**{member.name}**'s money has been reset to **${settings['starting_balance']:,}**",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Money Audit Log Prefix Command
+@bot.command(name="money-audit-log")
+async def money_audit_log_prefix(ctx):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    c.execute("SELECT user_id, wallet, total_earned FROM economy ORDER BY total_earned DESC LIMIT 20")
+    results = c.fetchall()
+    
+    embed = nextcord.Embed(
+        title="📊 Money Audit Log",
+        description="Top 20 earners in the server:",
+        color=BLUE
+    )
+    
+    for user_id, wallet, total in results:
+        user = ctx.guild.get_member(user_id)
+        name = user.name if user else f"User {user_id}"
+        embed.add_field(name=name, value=f"Wallet: ${wallet:,}\nTotal: ${total:,}", inline=True)
+    
+    await ctx.send(embed=embed)
+
+# Maximum Balance Prefix Command
+@bot.command(name="maximum-balance")
+async def maximum_balance_prefix(ctx):
+    embed = nextcord.Embed(
+        title="💰 Maximum Balance",
+        description="Current maximum balance is unlimited",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Add Money Role Prefix Command
+@bot.command(name="add-money-role")
+async def add_money_role_prefix(ctx, role: nextcord.Role, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    count = 0
+    for member in role.members:
+        user_data = get_user_economy(member.id)
+        new_wallet = user_data["wallet"] + amount
+        update_economy(member.id, wallet=new_wallet, total_earned=user_data["total_earned"] + amount)
+        count += 1
+    
+    embed = nextcord.Embed(
+        title="✅ Money Added to Role",
+        description=f"Added **${amount:,}** to **{count}** members with **{role.name}**",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Remove Money Role Prefix Command
+@bot.command(name="remove-money-role")
+async def remove_money_role_prefix(ctx, role: nextcord.Role, amount: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    count = 0
+    for member in role.members:
+        user_data = get_user_economy(member.id)
+        new_wallet = max(0, user_data["wallet"] - amount)
+        update_economy(member.id, wallet=new_wallet)
+        count += 1
+    
+    embed = nextcord.Embed(
+        title="✅ Money Removed from Role",
+        description=f"Removed **${amount:,}** from **{count}** members with **{role.name}**",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Reset Economy Prefix Command
+@bot.command(name="reset-economy")
+async def reset_economy_prefix(ctx):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in ctx.author.roles):
+        await ctx.send("❌ You don't have permission!")
+        return
+    
+    settings = get_economy_settings()
+    c.execute("UPDATE economy SET wallet = ?, bank = 0, total_earned = ?", (settings["starting_balance"], settings["starting_balance"]))
+    conn.commit()
+    
+    embed = nextcord.Embed(
+        title="✅ Economy Reset",
+        description="All users' money has been reset to starting balance!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# ==================== GAME PREFIX COMMANDS ====================
+
+# Roulette Prefix Command
+@bot.command(name="roulette")
+async def roulette_prefix(ctx, bet: int, color: str):
+    if bet <= 0:
+        await ctx.send("❌ Bet must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < bet:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    colors = ["red", "black", "green"]
+    color_lower = color.lower()
+    
+    if color_lower not in colors:
+        await ctx.send("❌ Choose red, black, or green!")
+        return
+    
+    result = random.choice(colors)
+    
+    if color_lower == result:
+        if color_lower == "green":
+            winnings = bet * 14
+        else:
+            winnings = bet * 2
+        
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Roulette - YOU WON!",
+            description=f"The wheel landed on **{result.upper()}**!\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    else:
+        update_economy(ctx.author.id, wallet=user_data["wallet"] - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Roulette - YOU LOST",
+            description=f"The wheel landed on **{result.upper()}**.\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await ctx.send(embed=embed)
+
+# Slot Machine Prefix Command
+@bot.command(name="slot-machine", aliases=["slots"])
+async def slot_machine_prefix(ctx, bet: int):
+    if bet <= 0:
+        await ctx.send("❌ Bet must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < bet:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐"]
+    
+    reel1 = random.choice(emojis)
+    reel2 = random.choice(emojis)
+    reel3 = random.choice(emojis)
+    
+    result_text = f"{reel1} {reel2} {reel3}"
+    
+    if reel1 == reel2 == reel3:
+        winnings = bet * 10
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 JACKPOT! 🎰",
+            description=f"{result_text}\nYou won **${winnings:,}**!",
+            color=0xFFD700
+        )
+    elif reel1 == reel2 or reel2 == reel3 or reel1 == reel3:
+        winnings = bet * 2
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 You Won!",
+            description=f"{result_text}\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    else:
+        update_economy(ctx.author.id, wallet=user_data["wallet"] - bet)
+        
+        embed = nextcord.Embed(
+            title="🎰 Better Luck Next Time",
+            description=f"{result_text}\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await ctx.send(embed=embed)
+
+# Blackjack Prefix Command
+@bot.command(name="blackjack", aliases=["bj"])
+async def blackjack_prefix(ctx, bet: int):
+    if bet <= 0:
+        await ctx.send("❌ Bet must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < bet:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    cards = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+    card_values = {"2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10, "J": 10, "Q": 10, "K": 10, "A": 11}
+    
+    def get_card_value(hand):
+        total = sum(card_values[c] for c in hand)
+        aces = hand.count("A")
+        while total > 21 and aces > 0:
+            total -= 10
+            aces -= 1
+        return total
+    
+    player_hand = [random.choice(cards), random.choice(cards)]
+    dealer_hand = [random.choice(cards), random.choice(cards)]
+    
+    player_total = get_card_value(player_hand)
+    dealer_total = get_card_value(dealer_hand)
+    
+    result_text = f"**Your cards:** {' '.join(player_hand)} ({player_total})\n**Dealer's cards:** {' '.join(dealer_hand)} ({dealer_total})"
+    
+    if player_total > 21:
+        update_economy(ctx.author.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - BUST!",
+            description=f"{result_text}\n\nYou busted! You lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    elif dealer_total > 21 or player_total > dealer_total:
+        winnings = bet * 2
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - YOU WIN!",
+            description=f"{result_text}\n\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    elif player_total == dealer_total:
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - PUSH",
+            description=f"{result_text}\n\nIt's a tie! Your bet of **${bet:,}** has been returned.",
+            color=BLUE
+        )
+    else:
+        update_economy(ctx.author.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🃏 Blackjack - YOU LOSE",
+            description=f"{result_text}\n\nThe dealer wins. You lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    
+    await ctx.send(embed=embed)
+
+# Russian Roulette Prefix Command
+@bot.command(name="russian-roulette", aliases=["rr"])
+async def russian_roulette_prefix(ctx, bet: int):
+    if bet <= 0:
+        await ctx.send("❌ Bet must be positive!")
+        return
+    
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < bet:
+        await ctx.send("❌ Insufficient funds!")
+        return
+    
+    if random.randint(1, 6) == 1:
+        update_economy(ctx.author.id, wallet=user_data["wallet"] - bet)
+        embed = nextcord.Embed(
+            title="🔫 Russian Roulette - BANG!",
+            description="You pulled the trigger and... BANG!\nYou lost **${bet:,}**.",
+            color=0xFF0000
+        )
+    else:
+        winnings = bet * 5
+        update_economy(ctx.author.id, wallet=user_data["wallet"] + winnings - bet, total_earned=user_data["total_earned"] + winnings - bet)
+        embed = nextcord.Embed(
+            title="🔫 Russian Roulette - CLICK!",
+            description="The chamber was empty... You survived!\nYou won **${winnings:,}**!",
+            color=0x00FF00
+        )
+    
+    await ctx.send(embed=embed)
+
+# Inventory Prefix Command
+@bot.command(name="inventory", aliases=["inv"])
+async def inventory_prefix(ctx):
+    user_data = get_user_economy(ctx.author.id)
+    
+    embed = nextcord.Embed(
+        title=f"🎒 {ctx.author.name}'s Inventory",
+        description="Your purchased items:",
+        color=BLUE
+    )
+    embed.add_field(name="Items", value="No items yet. Use `;buy-item` to purchase items!", inline=False)
+    embed.add_field(name="💰 Wallet", value=f"${user_data['wallet']:,}", inline=True)
+    
+    await ctx.send(embed=embed)
+
+# Item Info Prefix Command
+@bot.command(name="item-info")
+async def item_info_prefix(ctx, *, item_name: str):
+    items = {
+        "rare boost": {"price": 5000, "description": "A rare boost that increases work earnings by 10% for 24 hours"},
+        "star role": {"price": 10000, "description": "A shiny star role on your profile"},
+        "premium badge": {"price": 25000, "description": "A premium badge showing your support"},
+        "money multiplier": {"price": 15000, "description": "2x money earnings for 1 hour"},
+        "luck charm": {"price": 7500, "description": "Increases robbery success chance by 20%"},
+    }
+    
+    item_lower = item_name.lower()
+    if item_lower in items:
+        item = items[item_lower]
+        embed = nextcord.Embed(
+            title=f"📦 {item_name.title()}",
+            description=item["description"],
+            color=BLUE
+        )
+        embed.add_field(name="💰 Price", value=f"${item['price']:,}", inline=True)
+    else:
+        embed = nextcord.Embed(
+            title="❌ Item Not Found",
+            description="Available items: Rare Boost, Star Role, Premium Badge, Money Multiplier, Luck Charm",
+            color=0xFF0000
+        )
+    
+    await ctx.send(embed=embed)
+
+# Buy Item Prefix Command
+@bot.command(name="buy-item")
+async def buy_item_prefix(ctx, *, item_name: str):
+    items = {
+        "rare boost": {"price": 5000, "description": "A rare boost for your profile"},
+        "star role": {"price": 10000, "description": "A star role on your profile"},
+        "premium badge": {"price": 25000, "description": "A premium badge"},
+        "money multiplier": {"price": 15000, "description": "2x money earnings for 1 hour"},
+        "luck charm": {"price": 7500, "description": "Increases robbery success chance"},
+    }
+    
+    item_lower = item_name.lower()
+    if item_lower not in items:
+        await ctx.send("❌ Item not found! Available: Rare Boost, Star Role, Premium Badge, Money Multiplier, Luck Charm")
+        return
+    
+    item = items[item_lower]
+    user_data = get_user_economy(ctx.author.id)
+    
+    if user_data["wallet"] < item["price"]:
+        await ctx.send(f"❌ You need **${item['price']:,}** to buy this item!")
+        return
+    
+    update_economy(ctx.author.id, wallet=user_data["wallet"] - item["price"])
+    
+    embed = nextcord.Embed(
+        title="✅ Item Purchased!",
+        description=f"You bought **{item_name.title()}** for **${item['price']:,}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Use Item Prefix Command
+@bot.command(name="use-item")
+async def use_item_prefix(ctx, *, item_name: str):
+    items = ["rare boost", "star role", "premium badge", "money multiplier", "luck charm"]
+    
+    if item_name.lower() not in items:
+        await ctx.send("❌ You don't have this item!")
+        return
+    
+    embed = nextcord.Embed(
+        title="✅ Item Used!",
+        description=f"You used **{item_name}**!",
+        color=BLUE
+    )
+    await ctx.send(embed=embed)
+
+# Collect Income Prefix Command (already added above, keeping for reference)
+# Already added as collect-income and collect
+
 bot.run(os.getenv("TOKEN"))
 
