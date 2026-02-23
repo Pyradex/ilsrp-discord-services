@@ -42,7 +42,7 @@ intents.reactions = True
 # ------------------------------
 # Bot setup
 # ------------------------------
-bot = commands.Bot(command_prefix=";", intents=intents, help_command=None)
+bot = commands.Bot(command_prefix=">", intents=intents, help_command=None)
 
 LOG_CHANNEL_ID = 1473167409505374220  # Logging channel
 MEMBER_COUNT_CHANNEL_ID = 1471998856806797524  # Voice channel to show member count
@@ -2478,6 +2478,9 @@ async def on_ready():
     
     # Start scheduled verification task
     bot.loop.create_task(scheduled_verification())
+    
+    # Load existing modlogs from channel
+    bot.loop.create_task(load_modlogs_from_channel())
 
 # =========================================================
 # =================== DATABASE SETUP ======================
@@ -5642,6 +5645,741 @@ async def check_giveaways():
 bot.loop.create_task(check_giveaways())
 
 # ==================== END GIVEAWAY SYSTEM ====================
+
+# ==================== MODERATION SYSTEM ====================
+
+# Moderation role IDs
+MODERATION_ROLES = [
+    1471641790112333867,  # Supervision
+    1471641915215843559,  # Management
+    1472072792081170682,  # Evaluation
+]
+
+EXECUTIVE_HOLDING_ROLES = [
+    1471642126663024640,  # Executive
+    1471642360503992411,  # Holding
+]
+
+MOD_LOG_CHANNEL_ID = 1472035196579741852
+
+# Moderation Database
+c.execute('''CREATE TABLE IF NOT EXISTS modlogs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    mod_id INTEGER,
+    action_type TEXT,
+    reason TEXT,
+    timestamp INTEGER,
+    duration INTEGER,
+    active INTEGER DEFAULT 1
+)''')
+conn.commit()
+
+c.execute('''CREATE TABLE IF NOT EXISTS mod_config (
+    id INTEGER PRIMARY KEY,
+    modlog_channel_id INTEGER
+)''')
+conn.commit()
+
+# Parse duration function
+def parse_duration(duration_str):
+    """Parse duration string like 24h, 24hr, 1d, 1day, 10m, 10min, 5s, 5sec"""
+    if not duration_str:
+        return None
+    
+    duration_str = duration_str.lower().strip()
+    
+    # Handle weeks
+    if duration_str.endswith('w') or duration_str.endswith('week') or duration_str.endswith('wk'):
+        num = float(duration_str.rstrip('wwek'))
+        return int(num * 7 * 24 * 60 * 60)  # Convert to seconds
+    
+    # Handle days
+    if duration_str.endswith('d') or duration_str.endswith('day'):
+        num = float(duration_str.rstrip('day'))
+        return int(num * 24 * 60 * 60)  # Convert to seconds
+    
+    # Handle hours
+    if duration_str.endswith('h') or duration_str.endswith('hr'):
+        num = float(duration_str.rstrip('hr'))
+        return int(num * 60 * 60)  # Convert to seconds
+    
+    # Handle minutes
+    if duration_str.endswith('m') or duration_str.endswith('min'):
+        num = float(duration_str.rstrip('min'))
+        return int(num * 60)  # Convert to seconds
+    
+    # Handle seconds
+    if duration_str.endswith('s') or duration_str.endswith('sec'):
+        num = float(duration_str.rstrip('sec'))
+        return int(num)  # Already in seconds
+    
+    # Default - try to parse as seconds
+    try:
+        return int(duration_str)
+    except:
+        return None
+
+# Format duration function
+def format_duration(seconds):
+    """Format seconds into readable string"""
+    if seconds is None:
+        return "Permanent"
+    
+    weeks = seconds // (7 * 24 * 60 * 60)
+    days = (seconds % (7 * 24 * 60 * 60)) // (24 * 60 * 60)
+    hours = (seconds % (24 * 60 * 60)) // (60 * 60)
+    minutes = (seconds % (60 * 60)) // 60
+    secs = seconds % 60
+    
+    parts = []
+    if weeks > 0:
+        parts.append(f"{weeks}w")
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 and weeks == 0 and days == 0:
+        parts.append(f"{secs}s")
+    
+    return " ".join(parts) if parts else "0s"
+
+# Log moderation action
+def log_moderation(user_id, mod_id, action_type, reason, duration=None):
+    timestamp = int(datetime.now().timestamp())
+    c.execute("INSERT INTO modlogs (user_id, mod_id, action_type, reason, timestamp, duration, active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              (user_id, mod_id, action_type, reason, timestamp, duration, 1))
+    conn.commit()
+    return c.lastrowid
+
+# Get user modlogs
+def get_user_modlogs(user_id):
+    c.execute("SELECT * FROM modlogs WHERE user_id = ? ORDER BY timestamp DESC", (user_id,))
+    return c.fetchall()
+
+# Deactivate modlog (for unbans)
+def deactivate_modlog(modlog_id):
+    c.execute("UPDATE modlogs SET active = 0 WHERE id = ?", (modlog_id,))
+    conn.commit()
+
+# Get all modlogs
+def get_all_modlogs(limit=100):
+    c.execute("SELECT * FROM modlogs ORDER BY timestamp DESC LIMIT ?", (limit,))
+    return c.fetchall()
+
+# Get active modlogs
+def get_active_modlogs(user_id):
+    c.execute("SELECT * FROM modlogs WHERE user_id = ? AND active = 1 ORDER BY timestamp DESC", (user_id,))
+    return c.fetchall()
+
+# Clear user modlogs (for non-ban/kick only)
+def clear_user_modlogs(user_id):
+    c.execute("DELETE FROM modlogs WHERE user_id = ? AND action_type NOT IN ('ban', 'kick')", (user_id,))
+    conn.commit()
+
+# Check permissions
+def has_mod_permission(user, command_type):
+    """Check if user has permission for moderation commands"""
+    user_role_ids = [role.id for role in user.roles]
+    
+    # Executive + Holding can use all commands
+    if any(rid in EXECUTIVE_HOLDING_ROLES for rid in user_role_ids):
+        return True
+    
+    # Supervison, Management, Evaluation can use warn, note, timeout, clear
+    if command_type in ['warn', 'note', 'timeout', 'mute', 'clear']:
+        if any(rid in MODERATION_ROLES for rid in user_role_ids):
+            return True
+    
+    return False
+
+# Send modlog embed to channel
+async def send_modlog(embed):
+    channel = bot.get_channel(MOD_LOG_CHANNEL_ID)
+    if channel:
+        return await channel.send(embed=embed)
+    return None
+
+# ==================== MODERATION COMMANDS ====================
+
+@bot.command(name="timeout")
+async def timeout_cmd(ctx, member: nextcord.Member = None, duration: str = None, *, reason: str = None):
+    """Timeout a member"""
+    if not member or not duration or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    if not has_mod_permission(ctx.author, 'timeout'):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Parse duration
+    duration_seconds = parse_duration(duration)
+    if duration_seconds is None:
+        await ctx.send("Invalid duration format. Use formats like: 24h, 1d, 30m, 10s")
+        return
+    
+    # Max duration is 4 weeks
+    max_duration = 4 * 7 * 24 * 60 * 60
+    if duration_seconds > max_duration:
+        duration_seconds = max_duration
+    
+    try:
+        # Timeout the member
+        until_date = datetime.now() + timedelta(seconds=duration_seconds)
+        await member.timeout(until_date, reason=reason)
+        
+        # Log to database
+        log_moderation(member.id, ctx.author.id, 'timeout', reason, duration_seconds)
+        
+        # Send confirmation
+        embed = nextcord.Embed(
+            title="✅ Timeout Executed",
+            description=f"**{member}** has been timed out for **{format_duration(duration_seconds)}**",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        
+        await ctx.send(embed=embed)
+        
+        # Send to modlog
+        log_embed = nextcord.Embed(
+            title="� timeout",
+            color=0xFFA500,
+            timestamp=utcnow()
+        )
+        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+        log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        log_embed.add_field(name="Duration", value=format_duration(duration_seconds), inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        
+        await send_modlog(log_embed)
+        
+    except Exception as e:
+        await ctx.send(f"Error: {str(e)}")
+
+@bot.command(name="mute")
+async def mute_cmd(ctx, member: nextcord.Member = None, duration: str = None, *, reason: str = None):
+    """Mute a member (alias for timeout)"""
+    await timeout_cmd.callback(ctx, member, duration, reason)
+
+@bot.command(name="warn")
+async def warn_cmd(ctx, member: nextcord.Member = None, *, reason: str = None):
+    """Warn a member"""
+    if not member or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    if not has_mod_permission(ctx.author, 'warn'):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Log to database
+    log_moderation(member.id, ctx.author.id, 'warn', reason)
+    
+    # Send confirmation
+    embed = nextcord.Embed(
+        title="✅ Warning Issued",
+        description=f"**{member}** has been warned",
+        color=BLUE,
+        timestamp=utcnow()
+    )
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    
+    await ctx.send(embed=embed)
+    
+    # Send to modlog
+    log_embed = nextcord.Embed(
+        title="⚠️ Warning",
+        color=0xFFFF00,
+        timestamp=utcnow()
+    )
+    log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+    log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    log_embed.add_field(name="Reason", value=reason, inline=False)
+    
+    await send_modlog(log_embed)
+
+@bot.command(name="note")
+async def note_cmd(ctx, member: nextcord.Member = None, *, reason: str = None):
+    """Add a note to a member"""
+    if not member or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    if not has_mod_permission(ctx.author, 'note'):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Log to database
+    log_moderation(member.id, ctx.author.id, 'note', reason)
+    
+    # Send confirmation
+    embed = nextcord.Embed(
+        title="✅ Note Added",
+        description=f"Note added for **{member}**",
+        color=BLUE,
+        timestamp=utcnow()
+    )
+    embed.add_field(name="Note", value=reason, inline=False)
+    embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    
+    await ctx.send(embed=embed)
+    
+    # Send to modlog
+    log_embed = nextcord.Embed(
+        title="📝 Note",
+        color=0x00FFFF,
+        timestamp=utcnow()
+    )
+    log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+    log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+    log_embed.add_field(name="Note", value=reason, inline=False)
+    
+    await send_modlog(log_embed)
+
+@bot.command(name="kick")
+async def kick_cmd(ctx, member: nextcord.Member = None, *, reason: str = None):
+    """Kick a member"""
+    if not member or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    user_role_ids = [role.id for role in ctx.author.roles]
+    if not any(rid in EXECUTIVE_HOLDING_ROLES for rid in user_role_ids):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    try:
+        # Kick the member
+        await member.kick(reason=reason)
+        
+        # Log to database
+        log_moderation(member.id, ctx.author.id, 'kick', reason)
+        
+        # Send confirmation
+        embed = nextcord.Embed(
+            title="✅ Kick Executed",
+            description=f"**{member}** has been kicked from the server",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        
+        await ctx.send(embed=embed)
+        
+        # Send to modlog
+        log_embed = nextcord.Embed(
+            title="🚪 Kick",
+            color=0xFF0000,
+            timestamp=utcnow()
+        )
+        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+        log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        
+        await send_modlog(log_embed)
+        
+    except Exception as e:
+        await ctx.send(f"Error: {str(e)}")
+
+@bot.command(name="ban")
+async def ban_cmd(ctx, member: nextcord.Member = None, duration: str = None, *, reason: str = None):
+    """Ban a member"""
+    if not member or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    user_role_ids = [role.id for role in ctx.author.roles]
+    if not any(rid in EXECUTIVE_HOLDING_ROLES for rid in user_role_ids):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Parse duration (optional, default permanent)
+    duration_seconds = None
+    if duration:
+        duration_seconds = parse_duration(duration)
+        if duration_seconds:
+            # Max duration is 4 weeks
+            max_duration = 4 * 7 * 24 * 60 * 60
+            if duration_seconds > max_duration:
+                duration_seconds = max_duration
+    
+    try:
+        # Ban the member
+        if duration_seconds:
+            # Temporary ban
+            await member.ban(reason=reason)
+            # Note: Discord doesn't support temp bans natively, would need to unban later
+        else:
+            await member.ban(reason=reason)
+        
+        # Log to database
+        log_moderation(member.id, ctx.author.id, 'ban', reason, duration_seconds)
+        
+        # Send confirmation
+        duration_text = format_duration(duration_seconds) if duration_seconds else "Permanent"
+        embed = nextcord.Embed(
+            title="✅ Ban Executed",
+            description=f"**{member}** has been banned from the server",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Duration", value=duration_text, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        
+        await ctx.send(embed=embed)
+        
+        # Send to modlog
+        log_embed = nextcord.Embed(
+            title="🔨 Ban",
+            color=0xFF0000,
+            timestamp=utcnow()
+        )
+        log_embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+        log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        log_embed.add_field(name="Duration", value=duration_text, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        
+        await send_modlog(log_embed)
+        
+    except Exception as e:
+        await ctx.send(f"Error: {str(e)}")
+
+@bot.command(name="unban")
+async def unban_cmd(ctx, user_id: str = None, *, reason: str = None):
+    """Unban a member"""
+    if not user_id or not reason:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    user_role_ids = [role.id for role in ctx.author.roles]
+    if not any(rid in EXECUTIVE_HOLDING_ROLES for rid in user_role_ids):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Try to parse user ID
+    try:
+        user_id = int(user_id.strip('<@!>'))
+    except:
+        await ctx.send("Invalid user ID format")
+        return
+    
+    try:
+        # Unban the user
+        user = await bot.fetch_user(user_id)
+        await ctx.guild.unban(user, reason=reason)
+        
+        # Log to database (as unbanned - doesn't remove ban record)
+        log_moderation(user_id, ctx.author.id, 'unban', reason)
+        
+        # Send confirmation
+        embed = nextcord.Embed(
+            title="✅ Unban Executed",
+            description=f"**{user}** (`{user_id}`) has been unbanned",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        
+        await ctx.send(embed=embed)
+        
+        # Send to modlog
+        log_embed = nextcord.Embed(
+            title="✅ Unban",
+            color=0x00FF00,
+            timestamp=utcnow()
+        )
+        log_embed.add_field(name="Member", value=f"`{user_id}`", inline=True)
+        log_embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        log_embed.add_field(name="Reason", value=reason, inline=False)
+        
+        await send_modlog(log_embed)
+        
+    except nextcord.NotFound:
+        await ctx.send("User not found in ban list")
+    except Exception as e:
+        await ctx.send(f"Error: {str(e)}")
+
+@bot.command(name="clear")
+async def clear_cmd(ctx, amount: int = None):
+    """Clear messages"""
+    if amount is None:
+        await ctx.send("Please specify more information, such as a duration, community member, and/or reason.")
+        return
+    
+    if not has_mod_permission(ctx.author, 'clear'):
+        await ctx.send("You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+        return
+    
+    # Limit to 100 messages
+    if amount > 100:
+        amount = 100
+    
+    try:
+        deleted = await ctx.channel.purge(limit=amount)
+        
+        embed = nextcord.Embed(
+            title="✅ Messages Cleared",
+            description=f"Deleted **{len(deleted)}** messages",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Moderator", value=ctx.author.mention, inline=True)
+        
+        msg = await ctx.send(embed=embed)
+        await asyncio.sleep(3)
+        await msg.delete()
+        
+    except Exception as e:
+        await ctx.send(f"Error: {str(e)}")
+
+# ==================== MODLOGS PANEL ====================
+
+# Store modlog panels for persistence
+MODLOG_PANELS = {}  # {user_id: message_id}
+
+class ModlogSelect(nextcord.ui.Select):
+    def __init__(self, user_id):
+        options = [
+            nextcord.SelectOption(label="All Logs", value="all"),
+            nextcord.SelectOption(label="Timeouts", value="timeout"),
+            nextcord.SelectOption(label="Warnings", value="warn"),
+            nextcord.SelectOption(label="Notes", value="note"),
+            nextcord.SelectOption(label="Kicks", value="kick"),
+            nextcord.SelectOption(label="Bans", value="ban"),
+        ]
+        super().__init__(placeholder="Filter by action type", options=options, custom_id=f"modlog_select_{user_id}")
+        self.user_id = user_id
+
+    async def callback(self, interaction: nextcord.Interaction):
+        await interaction.response.defer()
+        await show_modlogs(interaction.user, interaction.channel, self.values[0])
+
+class ModlogView(nextcord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=300)
+        self.add_item(ModlogSelect(user_id))
+
+async def show_modlogs(user, channel, filter_type="all"):
+    """Show modlogs for a user"""
+    modlogs = get_all_modlogs(200)
+    
+    # Filter by type
+    if filter_type != "all":
+        modlogs = [log for log in modlogs if log[3] == filter_type]
+    
+    if not modlogs:
+        embed = nextcord.Embed(
+            title="📝 Modlogs",
+            description="No moderation logs found.",
+            color=BLUE
+        )
+        await channel.send(embed=embed, ephemeral=True)
+        return
+    
+    # Create paginated embeds
+    embeds = []
+    items_per_page = 5
+    for i in range(0, len(modlogs), items_per_page):
+        page_logs = modlogs[i:i+items_per_page]
+        
+        embed = nextcord.Embed(
+            title=f"📝 Moderation Logs - {filter_type.title()}",
+            description=f"Showing {len(page_logs)} of {len(modlogs)} logs",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        
+        for log in page_logs:
+            action_type = log[3]
+            reason = log[4]
+            timestamp = log[5]
+            duration = log[6]
+            mod_id = log[2]
+            log_id = log[0]
+            
+            # Get action emoji
+            action_emoji = {
+                'timeout': '⏰',
+                'mute': '⏰',
+                'warn': '⚠️',
+                'note': '📝',
+                'kick': '🚪',
+                'ban': '🔨',
+                'unban': '✅'
+            }.get(action_type, '❓')
+            
+            # Format duration
+            dur_text = ""
+            if duration and action_type in ['timeout', 'mute']:
+                dur_text = f" ({format_duration(duration)})"
+            
+            # Get moderator info
+            mod = channel.guild.get_member(mod_id)
+            mod_name = mod.name if mod else f"Unknown ({mod_id})"
+            
+            # Truncate reason if too long
+            if len(reason) > 50:
+                reason = reason[:47] + "..."
+            
+            embed.add_field(
+                name=f"{action_emoji} {action_type.upper()}{dur_text}",
+                value=f"**Reason:** {reason}\n**Moderator:** {mod_name}\n**ID:** `{log_id}`\n**Time:** <t:{timestamp}:R>",
+                inline=False
+            )
+        
+        embeds.append(embed)
+    
+    # Send first embed
+    if embeds:
+        view = ModlogView(user.id)
+        await channel.send(embed=embeds[0], view=view, ephemeral=True)
+
+@bot.command(name="modlogs")
+async def modlogs_cmd(ctx, member: nextcord.Member = None):
+    """View moderation logs"""
+    # Check if in bot channel
+    if ctx.channel.id not in BOT_CHANNEL_IDS:
+        # Check permissions
+        if not has_mod_permission(ctx.author, 'warn') and ctx.channel.id not in BOT_CHANNEL_IDS:
+            await ctx.send(f"You do not have the appropriate permissions to run that. You must be an Intern Evaluator+ member in order to do so.")
+            return
+    
+    if member:
+        # Show specific user's modlogs
+        modlogs = get_user_modlogs(member.id)
+        
+        if not modlogs:
+            embed = nextcord.Embed(
+                title="📝 Modlogs",
+                description=f"No moderation logs found for **{member}**.",
+                color=BLUE
+            )
+            await ctx.send(embed=embed, ephemeral=True)
+            return
+        
+        embed = nextcord.Embed(
+            title=f"📝 Moderation Logs for {member}",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        
+        for log in modlogs[:10]:  # Show last 10
+            action_type = log[3]
+            reason = log[4]
+            timestamp = log[5]
+            duration = log[6]
+            active = log[7]
+            
+            action_emoji = {
+                'timeout': '⏰',
+                'mute': '⏰',
+                'warn': '⚠️',
+                'note': '📝',
+                'kick': '🚪',
+                'ban': '🔨',
+                'unban': '✅'
+            }.get(action_type, '❓')
+            
+            active_text = " (Active)" if active and action_type in ['timeout', 'ban'] else ""
+            dur_text = f" ({format_duration(duration)})" if duration and action_type in ['timeout', 'mute'] else ""
+            
+            if len(reason) > 40:
+                reason = reason[:37] + "..."
+            
+            embed.add_field(
+                name=f"{action_emoji} {action_type.upper()}{dur_text}{active_text}",
+                value=f"{reason}\n<t:{timestamp}:R>",
+                inline=True
+            )
+        
+        view = ModlogView(member.id)
+        await ctx.send(embed=embed, view=view, ephemeral=True)
+    else:
+        # Show all modlogs
+        await show_modlogs(ctx.author, ctx.channel, "all")
+
+# ==================== LOAD EXISTING MODLOGS FROM CHANNEL ====================
+
+async def load_modlogs_from_channel():
+    """Load existing modlogs from the modlog channel on startup"""
+    channel = bot.get_channel(MOD_LOG_CHANNEL_ID)
+    if not channel:
+        return
+    
+    try:
+        async for message in channel.history(limit=100):
+            if message.author.id != bot.user.id:
+                continue
+            
+            if not message.embeds:
+                continue
+            
+            embed = message.embeds[0]
+            title = embed.title if embed.title else ""
+            
+            # Determine action type from title
+            action_type = None
+            if "timeout" in title.lower():
+                action_type = "timeout"
+            elif "warning" in title.lower():
+                action_type = "warn"
+            elif "note" in title.lower():
+                action_type = "note"
+            elif "kick" in title.lower():
+                action_type = "kick"
+            elif "ban" in title.lower():
+                action_type = "ban"
+            elif "unban" in title.lower():
+                action_type = "unban"
+            
+            if not action_type:
+                continue
+            
+            # Extract user ID and mod ID from fields
+            user_id = None
+            mod_id = None
+            reason = "Loaded from channel"
+            duration = None
+            
+            for field in embed.fields:
+                if "member" in field.name.lower():
+                    # Try to extract ID from value
+                    value = field.value
+                    if "`" in value:
+                        try:
+                            user_id = int(value.split("`")[1].replace(">", ""))
+                        except:
+                            pass
+                elif "moderator" in field.name.lower():
+                    # Try to extract ID
+                    value = field.value
+                    if "<@" in value:
+                        try:
+                            mod_id = int(value.replace("<@", "").replace(">", ""))
+                        except:
+                            pass
+                elif "reason" in field.name.lower():
+                    reason = field.value
+                elif "duration" in field.name.lower():
+                    duration = parse_duration(field.value)
+            
+            if user_id:
+                log_moderation(user_id, mod_id or bot.user.id, action_type, reason, duration)
+                
+    except Exception as e:
+        print(f"Error loading modlogs: {e}")
+
+# ==================== END MODERATION SYSTEM ====================
 
 bot.run(os.getenv("TOKEN"))
 
