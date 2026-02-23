@@ -42,7 +42,7 @@ intents.reactions = True
 # ------------------------------
 # Bot setup
 # ------------------------------
-bot = commands.Bot(command_prefix=";", intents=intents)
+bot = commands.Bot(command_prefix=";", intents=intents, help_command=None)
 
 LOG_CHANNEL_ID = 1473167409505374220  # Logging channel
 MEMBER_COUNT_CHANNEL_ID = 1471998856806797524  # Voice channel to show member count
@@ -575,6 +575,19 @@ async def on_member_join(member):
     
     # Update member count channel
     await update_member_count(member.guild)
+    
+    # Send incoming member log
+    incoming_log_channel = bot.get_channel(1472054318273138836)
+    if incoming_log_channel:
+        embed = nextcord.Embed(
+            title="# __Incoming Member Logistic__",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Community Member", value=member.mention, inline=True)
+        embed.add_field(name="Member Identification", value=f"`{member.id}`", inline=True)
+        embed.add_field(name="Joining Timestamp", value=f"<t:{int(datetime.now().timestamp())}:F>", inline=True)
+        await incoming_log_channel.send(embed=embed)
 
 # ------------------------------
 # Member leave event
@@ -583,6 +596,24 @@ async def on_member_join(member):
 async def on_member_remove(member):
     # Update member count channel when a member leaves
     await update_member_count(member.guild)
+    
+    # Get member's roles (without pinging)
+    roles_list = [role.name for role in member.roles if role.name != "@everyone"]
+    roles_text = ", ".join(roles_list) if roles_list else "No roles"
+    
+    # Send outgoing member log (as embed, no role pings)
+    outgoing_log_channel = bot.get_channel(1472054353429925908)
+    if outgoing_log_channel:
+        embed = nextcord.Embed(
+            title="# __Incoming Member Logistic__",
+            color=BLUE,
+            timestamp=utcnow()
+        )
+        embed.add_field(name="Community Member", value=member.mention, inline=True)
+        embed.add_field(name="Member Identification", value=f"`{member.id}`", inline=True)
+        embed.add_field(name="Leaving Timestamp", value=f"<t:{int(datetime.now().timestamp())}:F>", inline=True)
+        embed.add_field(name="Former Roles", value=roles_text, inline=False)
+        await outgoing_log_channel.send(embed=embed)
 
 # ------------------------------
 # Command Logging Helper
@@ -5422,6 +5453,195 @@ async def use_item_prefix(ctx, *, item_name: str):
 
 # Collect Income Prefix Command (already added above, keeping for reference)
 # Already added as collect-income and collect
+
+# ==================== GIVEAWAY SYSTEM ====================
+import asyncio
+from datetime import datetime
+
+# Giveaway database
+c.execute('''CREATE TABLE IF NOT EXISTS giveaways (
+    message_id INTEGER PRIMARY KEY,
+    channel_id INTEGER,
+    prize TEXT,
+    winners INTEGER,
+    ends_at INTEGER,
+    ended INTEGER DEFAULT 0
+)''')
+conn.commit()
+
+GIVEAWAY_EMOJI = "🎁"
+CHECKMARK_EMOJI = "✅"
+
+class GiveawayView(nextcord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @nextcord.ui.button(label="Enter Giveaway", style=nextcord.ButtonStyle.success, emoji="🎁", custom_id="giveaway_enter")
+    async def enter_giveaway(self, button, interaction):
+        # Add entry to database
+        c.execute("SELECT * FROM giveaway_entries WHERE message_id = ? AND user_id = ?", 
+                  (interaction.message.id, interaction.user.id))
+        if c.fetchone():
+            await interaction.response.send_message("❌ You already entered this giveaway!", ephemeral=True)
+            return
+        
+        c.execute("INSERT INTO giveaway_entries (message_id, user_id) VALUES (?, ?)",
+                  (interaction.message.id, interaction.user.id))
+        conn.commit()
+        
+        # Get updated count
+        c.execute("SELECT COUNT(*) FROM giveaway_entries WHERE message_id = ?", (interaction.message.id,))
+        count = c.fetchone()[0]
+        
+        await interaction.response.send_message(f"✅ Entered! Current entries: {count}", ephemeral=True)
+        
+        # Update embed with new count
+        embed = interaction.message.embeds[0]
+        c.execute("SELECT prize, winners, ends_at FROM giveaways WHERE message_id = ?", (interaction.message.id,))
+        result = c.fetchone()
+        if result:
+            prize, winners, ends_at = result
+            ends_time = datetime.fromtimestamp(ends_at)
+            embed.description = f"**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** {ends_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n**Entries:** {count} 🎁"
+            try:
+                await interaction.message.edit(embed=embed)
+            except:
+                pass
+
+# Create giveaway entries table
+c.execute('''CREATE TABLE IF NOT EXISTS giveaway_entries (
+    message_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (message_id, user_id)
+)''')
+conn.commit()
+
+@bot.slash_command(name="giveaway", description="Create a giveaway")
+async def giveaway(interaction: nextcord.Interaction, prize: str, winners: int = 1, hours: int = 24):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    ends_at = int(datetime.now().timestamp()) + (hours * 3600)
+    ends_time = datetime.fromtimestamp(ends_at)
+    
+    embed = nextcord.Embed(
+        title=f"🎁 GIVEAWAY: {prize}",
+        description=f"**Prize:** {prize}\n**Winners:** {winners}\n**Ends:** {ends_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n**Entries:** 0 🎁",
+        color=0xFFD700,
+        timestamp=utcnow()
+    )
+    embed.set_footer(text="React below to enter!")
+    
+    view = GiveawayView()
+    message = await interaction.response.send_message(embed=embed, view=view)
+    
+    # Save to database
+    if hasattr(interaction, 'message'):
+        msg_id = interaction.message.id
+    else:
+        msg_id = message.id
+    
+    c.execute("INSERT INTO giveaways (message_id, channel_id, prize, winners, ends_at) VALUES (?, ?, ?, ?, ?)",
+              (msg_id, interaction.channel.id, prize, winners, ends_at))
+    conn.commit()
+    
+    await interaction.followup.send(f"✅ Giveaway created! It will end in {hours} hours.", ephemeral=True)
+
+@bot.slash_command(name="g-end", description="End a giveaway early")
+async def g_end(interaction: nextcord.Interaction, message_id: int):
+    if not any(role.id in EXECUTIVE_HOLDING_ROLE_IDS for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission!", ephemeral=True)
+        return
+    
+    c.execute("SELECT * FROM giveaways WHERE message_id = ? AND ended = 0", (message_id,))
+    giveaway = c.fetchone()
+    
+    if not giveaway:
+        await interaction.response.send_message("❌ Giveaway not found or already ended!", ephemeral=True)
+        return
+    
+    # Get entries
+    c.execute("SELECT user_id FROM giveaway_entries WHERE message_id = ?", (message_id,))
+    entries = c.fetchall()
+    
+    if not entries:
+        await interaction.response.send_message("❌ No entries in this giveaway!", ephemeral=True)
+        return
+    
+    # Pick winners
+    winners_list = random.sample(entries, min(giveaway[3], len(entries)))
+    winners_mentions = []
+    
+    for winner_id in winners_list:
+        member = interaction.guild.get_member(winner_id[0])
+        if member:
+            winners_mentions.append(member.mention)
+    
+    # Update database
+    c.execute("UPDATE giveaways SET ended = 1 WHERE message_id = ?", (message_id,))
+    conn.commit()
+    
+    # Update embed
+    channel = interaction.guild.get_channel(giveaway[2])
+    try:
+        message = await channel.fetch_message(message_id)
+        embed = message.embeds[0]
+        embed.title = f"✅ GIVEAWAY ENDED: {giveaway[3]}"
+        embed.color = 0x00FF00
+        await message.edit(embed=embed, view=None)
+    except:
+        pass
+    
+    # Announce winners
+    await interaction.response.send_message(f"🎉 Congratulations to {', '.join(winners_mentions)} who won **{giveaway[2]}**!", ephemeral=True)
+
+# Giveaway end check task
+async def check_giveaways():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        current_time = int(datetime.now().timestamp())
+        
+        c.execute("SELECT message_id, channel_id, prize, winners FROM giveaways WHERE ended = 0 AND ends_at <= ?", (current_time,))
+        ended_giveaways = c.fetchall()
+        
+        for giveaway in ended_giveaways:
+            msg_id, channel_id, prize, winners = giveaway
+            
+            # Get entries
+            c.execute("SELECT user_id FROM giveaway_entries WHERE message_id = ?", (msg_id,))
+            entries = c.fetchall()
+            
+            if entries:
+                winners_list = random.sample(entries, min(winners, len(entries)))
+                winners_mentions = []
+                
+                for winner_id in winners_list:
+                    member = bot.get_guild(interaction.guild.id).get_member(winner_id[0]) if hasattr(bot, 'get_guild') else None
+                    if member:
+                        winners_mentions.append(member.mention)
+                
+                # Announce in channel
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    embed = nextcord.Embed(
+                        title="🎉 Giveaway Ended!",
+                        description=f"**Prize:** {prize}\n\n🎉 Winners: {', '.join(winners_mentions)}",
+                        color=0xFFD700,
+                        timestamp=utcnow()
+                    )
+                    await channel.send(embed=embed)
+            
+            # Update database
+            c.execute("UPDATE giveaways SET ended = 1 WHERE message_id = ?", (msg_id,))
+            conn.commit()
+        
+        await asyncio.sleep(60)
+
+# Start giveaway checker
+bot.loop.create_task(check_giveaways())
+
+# ==================== END GIVEAWAY SYSTEM ====================
 
 bot.run(os.getenv("TOKEN"))
 
