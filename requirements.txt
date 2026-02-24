@@ -3,3 +3,5 @@ flask
 chat-exporter
 requests
 pytz
+wavelink
+spotipy
